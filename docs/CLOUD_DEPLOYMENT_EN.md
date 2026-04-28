@@ -57,8 +57,8 @@ If Docker Hub is slow or blocked in your network, you can switch image source la
 ## 3. Clone the Project
 
 ```bash
-git clone https://github.com/brokermr810/QuantDinger.git
-cd QuantDinger
+git clone https://github.com/guofeng201507/SharkQuantDinger.git
+cd SharkQuantDinger
 ```
 
 ## 4. Configure `backend_api_python/.env`

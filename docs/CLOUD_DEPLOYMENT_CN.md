@@ -57,8 +57,8 @@ docker compose version
 ## 3. 拉取项目
 
 ```bash
-git clone https://github.com/brokermr810/QuantDinger.git
-cd QuantDinger
+git clone https://github.com/guofeng201507/SharkQuantDinger.git
+cd SharkQuantDinger
 ```
 
 ## 4. 配置后端 `.env`
