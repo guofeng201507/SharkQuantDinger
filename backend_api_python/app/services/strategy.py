@@ -301,7 +301,7 @@ class StrategyService:
         with StrategyService._connection_test_semaphore:
             try:
                 from app.services.exchange_execution import resolve_exchange_config, safe_exchange_config_for_log
-                from app.services.live_trading.factory import create_client
+                from app.services.live_trading.factory import create_client, exchange_demo_mode_enabled
                 from app.services.live_trading.binance import BinanceFuturesClient
                 from app.services.live_trading.binance_spot import BinanceSpotClient
                 from app.services.live_trading.okx import OkxClient
@@ -519,7 +519,7 @@ class StrategyService:
                                 alt_ok = False
 
                             base_url = getattr(client, "base_url", "") or ""
-                            is_demo = str(resolved.get("enable_demo_trading") or resolved.get("enableDemoTrading") or "").strip().lower() in ("true", "1", "yes")
+                            is_demo = exchange_demo_mode_enabled(resolved)
                             hint = (
                                 f"Binance auth failed (-2015). Verify: "
                                 f"(1) IP whitelist includes this server egress IP={egress_ip or 'unknown'}, "
@@ -958,6 +958,11 @@ class StrategyService:
                 f"IBKR can only be used for US stock trading, but market_category is '{market_category}'. "
                 f"Please set market category to US Stock when using Interactive Brokers."
             )
+        if market_category == 'MOEX':
+            raise ValueError(
+                "MOEX (Moscow Exchange) is supported for analysis and backtesting only. "
+                "Live order placement on MOEX is not implemented."
+            )
 
         # When credential_id is present, strip raw API keys to avoid
         # storing secrets in the strategy record — they live in qd_exchange_credentials.
@@ -1076,7 +1081,12 @@ class StrategyService:
                 f"IBKR can only be used for US stock trading, but market_category is '{market_category}'. "
                 f"Please set market category to US Stock when using Interactive Brokers."
             )
-        
+        if market_category == 'MOEX':
+            raise ValueError(
+                "MOEX (Moscow Exchange) is supported for analysis and backtesting only. "
+                "Live order placement on MOEX is not implemented."
+            )
+
         # Generate strategy group ID
         strategy_group_id = str(uuid.uuid4())[:8]
         
@@ -1276,6 +1286,11 @@ class StrategyService:
         if ex_id == 'ibkr' and market_category != 'USStock':
             raise ValueError(
                 f"IBKR can only be used for US stock trading, but market_category is '{market_category}'."
+            )
+        if market_category == 'MOEX':
+            raise ValueError(
+                "MOEX (Moscow Exchange) is supported for analysis and backtesting only. "
+                "Live order placement on MOEX is not implemented."
             )
 
         symbol = (trading_config or {}).get('symbol')
