@@ -27,10 +27,14 @@ hardened mode by deployment configuration.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.utils.agent_auth import (
-    ALL_SCOPES, generate_token, parse_csv_list, parse_scopes,
+    ALL_SCOPES,
+    ensure_agent_gateway_schema,
+    generate_token,
+    parse_csv_list,
+    parse_scopes,
 )
 from app.utils.auth import admin_required, get_current_user_id, login_required
 from app.utils.db import get_db_connection
@@ -55,6 +59,13 @@ def _is_saas_mode() -> bool:
 
 
 def _normalize_expiry(days: int | None) -> datetime | None:
+    """Return an *aware* UTC datetime expires_at value.
+
+    psycopg2 will convert it to the server's TZ wall-clock when storing into
+    the ``TIMESTAMP WITHOUT TIME ZONE`` column, which keeps a single
+    "naive timestamp = server local wall-clock" rule across the whole DB and
+    lets ``SafeJSONProvider`` serialize it back to UTC ISO correctly.
+    """
     if not days:
         return None
     try:
@@ -63,7 +74,7 @@ def _normalize_expiry(days: int | None) -> datetime | None:
         return None
     if d <= 0:
         return None
-    return datetime.utcnow() + timedelta(days=d)
+    return datetime.now(timezone.utc) + timedelta(days=d)
 
 
 @agent_v1_bp.route("/admin/tokens", methods=["POST"])
@@ -77,6 +88,7 @@ def issue_token():
       name, scopes (e.g. "R,B"), markets (csv), instruments (csv),
       paper_only (bool), rate_limit_per_min (int), expires_in_days (int)
     """
+    ensure_agent_gateway_schema()
     body, err = get_json_or_400()
     if err:
         return err
@@ -137,8 +149,16 @@ def issue_token():
                 paper_only, rate_limit, expires_at,
             ),
         )
-        row = cur.fetchone()
+        # NOTE: app.utils.db_postgres' PostgresCursor wrapper silently
+        # consumes the RETURNING row into its internal `_last_insert_id`
+        # attribute, so cur.fetchone() here returns None.  Re-fetch via
+        # SELECT on the unique token_hash to recover id + created_at.
         db.commit()
+        cur.execute(
+            "SELECT id, created_at FROM qd_agent_tokens WHERE token_hash = %s",
+            (token_hash,),
+        )
+        row = cur.fetchone()
         cur.close()
 
     return envelope({
@@ -151,8 +171,9 @@ def issue_token():
         "instruments": instruments,
         "paper_only": paper_only,
         "rate_limit_per_min": rate_limit,
-        "expires_at": (expires_at.isoformat() + "Z") if expires_at else None,
-        "created_at": row["created_at"].isoformat() + "Z" if row.get("created_at") else None,
+        # Datetimes go through SafeJSONProvider → UTC ISO (with Z).
+        "expires_at": expires_at,
+        "created_at": row.get("created_at"),
     }, message="issued")
 
 
@@ -161,6 +182,7 @@ def issue_token():
 @admin_required
 def list_tokens():
     """List tokens for the calling admin's tenant (no secrets)."""
+    ensure_agent_gateway_schema()
     user_id = int(get_current_user_id() or 1)
     with get_db_connection() as db:
         cur = db.cursor()
@@ -185,6 +207,7 @@ def list_tokens():
 @admin_required
 def revoke_token(token_id: int):
     """Revoke a token (sets status='revoked'; cannot be re-activated)."""
+    ensure_agent_gateway_schema()
     user_id = int(get_current_user_id() or 1)
     with get_db_connection() as db:
         cur = db.cursor()
@@ -205,6 +228,7 @@ def revoke_token(token_id: int):
 @admin_required
 def list_audit():
     """Recent audit entries for this tenant (admin only)."""
+    ensure_agent_gateway_schema()
     user_id = int(get_current_user_id() or 1)
     try:
         limit = max(1, min(int(request.args.get("limit") or 100), 500))

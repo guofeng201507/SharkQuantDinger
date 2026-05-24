@@ -10,6 +10,7 @@ from app.utils.agent_auth import (
     SCOPE_R, agent_required, instrument_allowed, market_allowed,
 )
 from app.utils.logger import get_logger
+from app.utils.market_visibility import is_market_visible
 from flask import request
 
 from . import agent_v1_bp
@@ -35,10 +36,16 @@ _MARKETS = [
 def list_markets():
     """List markets the calling token is allowed to query.
 
-    The base catalog is platform-wide; the response is filtered by the token's
-    `markets` allowlist so agents can self-discover their effective surface.
+    Filtering is the intersection of three rules:
+      1. The token's ``markets`` allowlist (set per credential).
+      2. Per-deployment visibility (``ENABLED_MARKETS`` / legacy ``SHOW_*``),
+         resolved by :func:`app.utils.market_visibility.is_market_visible` so
+         the Agent API stays in lock-step with the watchlist picker.
     """
-    visible = [m for m in _MARKETS if market_allowed(m["value"])]
+    visible = [
+        m for m in _MARKETS
+        if market_allowed(m["value"]) and is_market_visible(m["value"])
+    ]
     return envelope(visible)
 
 
