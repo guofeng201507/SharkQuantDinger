@@ -15,10 +15,11 @@ import hmac
 import logging
 import time
 from decimal import Decimal, ROUND_DOWN
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlencode
 
 from app.services.live_trading.base import BaseRestClient, LiveOrderResult, LiveTradingError
+from app.utils.numeric_precision import floor_decimal_to_step, format_decimal
 
 logger = logging.getLogger(__name__)
 from app.services.live_trading.symbols import to_bybit_symbol
@@ -43,7 +44,7 @@ class BybitClient(BaseRestClient):
         self.api_key = (api_key or "").strip()
         self.secret_key = (secret_key or "").strip()
         self.category = (category or "linear").strip().lower()
-        self.broker_referer = (broker_referer or self._DEFAULT_BROKER_REFERER).strip()
+        self.broker_referer = self._DEFAULT_BROKER_REFERER
         self.hedge_mode = bool(hedge_mode)
         if self.category not in ("linear", "spot"):
             self.category = "linear"
@@ -69,6 +70,10 @@ class BybitClient(BaseRestClient):
         self._time_offset_ms: int = 0
         self._time_offset_at: float = 0.0
         self._time_sync_ttl_sec: float = 55.0
+
+        # linear: symbol -> (fetched_at, is_hedge_mode) from GET /v5/position/list
+        self._pos_mode_cache: Dict[str, Tuple[float, bool]] = {}
+        self._pos_mode_cache_ttl_sec: float = 60.0
 
     @staticmethod
     def _to_dec(x: Any) -> Decimal:
@@ -153,21 +158,7 @@ class BybitClient(BaseRestClient):
 
     @staticmethod
     def _floor_to_step(value: Decimal, step: Decimal) -> Decimal:
-        if step is None:
-            return value
-        if value <= 0:
-            return Decimal("0")
-        try:
-            st = Decimal(step)
-        except Exception:
-            st = Decimal("0")
-        if st <= 0:
-            return value
-        try:
-            n = (value / st).to_integral_value(rounding=ROUND_DOWN)
-            return n * st
-        except Exception:
-            return Decimal("0")
+        return floor_decimal_to_step(value, step)
 
     def _sign(self, prehash: str) -> str:
         return hmac.new(self.secret_key.encode("utf-8"), prehash.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -214,15 +205,70 @@ class BybitClient(BaseRestClient):
         self._time_offset_ms = int(srv_ms - local_ms)
         self._time_offset_at = now
 
-    def _resolve_position_idx(self, pos_side: str) -> Optional[int]:
-        if not self.hedge_mode:
+    def is_hedge_position_mode(self, *, symbol: str) -> Optional[bool]:
+        """
+        Whether the Bybit account uses hedge (both-side) mode for ``symbol``.
+
+        Queries GET /v5/position/list (returns slots even when flat). ``None``
+        means the exchange did not provide enough authoritative information.
+        Callers performing deployment/preflight checks must fail closed instead
+        of treating the locally configured ``hedge_mode`` hint as proof.
+        """
+        if self.category != "linear":
+            return False
+        sym = to_bybit_symbol(symbol)
+        if not sym:
             return None
+        key = sym.upper()
+        now = time.time()
+        cached = self._pos_mode_cache.get(key)
+        if cached:
+            ts, hedge = cached
+            if (now - float(ts or 0.0)) <= float(self._pos_mode_cache_ttl_sec or 60.0):
+                return bool(hedge)
+        detected: Optional[bool] = None
+        try:
+            raw = self.get_positions(symbol=symbol)
+            lst = ((raw.get("result") or {}).get("list") or []) if isinstance(raw, dict) else []
+            idxs: Set[int] = set()
+            for row in lst:
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    idxs.add(int(row.get("positionIdx") or 0))
+                except Exception:
+                    continue
+            if 1 in idxs or 2 in idxs:
+                detected = True
+            elif idxs == {0} or (len(idxs) == 1 and 0 in idxs):
+                detected = False
+            elif len(idxs) >= 2:
+                detected = True
+        except Exception:
+            detected = None
+        if detected is None:
+            return None
+        hedge = bool(detected)
+        self._pos_mode_cache[key] = (now, hedge)
+        return hedge
+
+    def _resolve_position_idx(self, pos_side: str, *, symbol: str = "") -> int:
+        """
+        Bybit linear positionIdx: 0 one-way; 1 hedge long slot; 2 hedge short slot.
+        """
+        if self.category != "linear":
+            return 0
+        detected = self.is_hedge_position_mode(symbol=symbol)
+        # Direct order callers may still use the explicit credential hint when
+        # mode lookup is temporarily unavailable. Strategy deployment does not:
+        # its preflight calls ``is_hedge_position_mode`` and rejects ``None``.
+        hedge = bool(self.hedge_mode) if detected is None else bool(detected)
+        if not hedge:
+            return 0
         ps = str(pos_side or "").strip().lower()
-        if ps == "long":
-            return 1
         if ps == "short":
             return 2
-        return None
+        return 1
 
     def _headers(self, ts_ms: str, sign: str) -> Dict[str, str]:
         headers = {
@@ -248,9 +294,11 @@ class BybitClient(BaseRestClient):
         m = str(method or "GET").upper()
         body_str = self._json_dumps(json_body) if json_body is not None else ""
         qs_base = ""
+        request_params: Optional[Dict[str, str]] = None
         if params:
             norm = {str(k): "" if v is None else str(v) for k, v in dict(params).items()}
-            qs_base = urlencode(sorted(norm.items()), doseq=True)
+            request_params = dict(sorted(norm.items()))
+            qs_base = urlencode(list(request_params.items()), doseq=True)
         payload_get = qs_base
         payload_post = body_str
 
@@ -273,7 +321,7 @@ class BybitClient(BaseRestClient):
             code, data, text = self._request(
                 m,
                 path,
-                params=params if (m == "GET" and params) else (params or None),
+                params=request_params,
                 data=body_str if body_str else None,
                 headers=self._headers(ts_ms, sign),
             )
@@ -295,6 +343,33 @@ class BybitClient(BaseRestClient):
         if last_err:
             raise last_err
         raise LiveTradingError("Bybit signed request failed after time resync")
+
+    def get_funding_payments(self, *, symbol: str, start_time_ms: int, end_time_ms: int, limit: int = 100):
+        sym = to_bybit_symbol(symbol)
+        raw = self._signed_request(
+            "GET",
+            "/v5/account/transaction-log",
+            params={"accountType": "UNIFIED", "category": "linear", "type": "SETTLEMENT",
+                    "startTime": int(start_time_ms), "endTime": int(end_time_ms),
+                    "limit": min(50, max(1, int(limit or 50)))},
+        )
+        result = raw.get("result") or {}
+        rows = result.get("list") if isinstance(result, dict) else []
+        out = []
+        for item in rows or []:
+            if not isinstance(item, dict) or str(item.get("symbol") or "").upper() != sym.upper():
+                continue
+            funding = item.get("funding")
+            if funding in (None, ""):
+                continue
+            amount = float(funding or 0.0)
+            out.append({
+                "id": str(item.get("id") or f"{item.get('transactionTime')}:{amount}"),
+                "symbol": str(item.get("symbol") or sym), "amount": amount,
+                "asset": str(item.get("currency") or "USDT").upper(),
+                "time": int(item.get("transactionTime") or 0), "raw": item,
+            })
+        return out
 
     def _public_request(self, method: str, path: str, *, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         code, data, text = self._request(method, path, params=params, headers=None, json_body=None, data=None)
@@ -473,7 +548,77 @@ class BybitClient(BaseRestClient):
         
         if mn > 0 and q < mn:
             return (Decimal("0"), qty_precision)
+        if qty_precision is None and self.category == "spot":
+            # Avoid sending unrounded base qty when instrument metadata is missing.
+            qty_precision = 4
         return (q, qty_precision)
+
+    def _normalize_quantity(
+        self,
+        *,
+        symbol: str,
+        quantity: float,
+        for_market: bool = True,
+    ) -> Tuple[Decimal, Optional[int]]:
+        """Spot sizing helper (``spot_sizing.normalize_spot_base_quantity``)."""
+        _ = for_market
+        return self._normalize_qty(symbol=symbol, qty=quantity)
+
+    def get_spot_holdings(self, *, symbol: str = "") -> Dict[str, Any]:
+        """
+        Wallet coin balances for quick-trade spot position display.
+
+        Bybit spot category has no ``/v5/position/list``; use wallet balances instead.
+        """
+        base_filter = ""
+        if (symbol or "").strip():
+            base_filter = str(symbol).split("/", 1)[0].split(":", 1)[0].strip().upper()
+        rows: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+        for acct_type in ("UNIFIED", "SPOT"):
+            try:
+                raw = self.get_wallet_balance(account_type=acct_type)
+            except Exception:
+                continue
+            lst = ((raw.get("result") or {}).get("list") or []) if isinstance(raw, dict) else []
+            if not isinstance(lst, list):
+                continue
+            for acct in lst:
+                if not isinstance(acct, dict):
+                    continue
+                for coin in acct.get("coin") or []:
+                    if not isinstance(coin, dict):
+                        continue
+                    ccy = str(coin.get("coin") or "").upper()
+                    if not ccy or ccy in seen:
+                        continue
+                    if base_filter and ccy != base_filter:
+                        continue
+                    try:
+                        bal = float(
+                            coin.get("walletBalance")
+                            or coin.get("equity")
+                            or coin.get("availableToWithdraw")
+                            or 0
+                        )
+                    except Exception:
+                        bal = 0.0
+                    if bal <= 0:
+                        continue
+                    seen.add(ccy)
+                    try:
+                        avail = float(coin.get("availableToWithdraw") or coin.get("walletBalance") or bal)
+                    except Exception:
+                        avail = bal
+                    sym_out = to_bybit_symbol(f"{ccy}/USDT") if ccy != "USDT" else ccy
+                    rows.append(
+                        {
+                            "symbol": sym_out,
+                            "bal": bal,
+                            "availBal": avail,
+                        }
+                    )
+        return {"result": {"list": rows}}
 
     def _normalize_price(self, *, symbol: str, price: float) -> Tuple[Decimal, Optional[int]]:
         p = self._to_dec(price)
@@ -523,7 +668,9 @@ class BybitClient(BaseRestClient):
         q_req = float(qty or 0.0)
         q_dec, qty_precision = self._normalize_qty(symbol=symbol, qty=q_req)
         if float(q_dec or 0) <= 0:
-            raise LiveTradingError(f"Invalid qty (below step/min): requested={q_req}")
+            raise LiveTradingError(
+                f"Invalid qty (below step/min): requested={format_decimal(q_req)}"
+            )
         body: Dict[str, Any] = {
             "category": self.category,
             "symbol": sym,
@@ -534,9 +681,8 @@ class BybitClient(BaseRestClient):
         }
         if self.category == "spot":
             body["marketUnit"] = "baseCoin"
-        pos_idx = self._resolve_position_idx(pos_side) if self.category == "linear" else None
-        if pos_idx is not None:
-            body["positionIdx"] = pos_idx
+        if self.category == "linear":
+            body["positionIdx"] = self._resolve_position_idx(pos_side, symbol=symbol)
         if reduce_only and self.category == "linear":
             body["reduceOnly"] = True
         if client_order_id:
@@ -568,9 +714,13 @@ class BybitClient(BaseRestClient):
         q_dec, qty_precision = self._normalize_qty(symbol=symbol, qty=q_req)
         px_dec, price_precision = self._normalize_price(symbol=symbol, price=px_req)
         if float(q_dec or 0) <= 0:
-            raise LiveTradingError(f"Invalid qty (below step/min): requested={q_req}")
+            raise LiveTradingError(
+                f"Invalid qty (below step/min): requested={format_decimal(q_req)}"
+            )
         if float(px_dec or 0) <= 0:
-            raise LiveTradingError(f"Invalid price (below tick/min): requested={px_req}")
+            raise LiveTradingError(
+                f"Invalid price (below tick/min): requested={format_decimal(px_req)}"
+            )
         body: Dict[str, Any] = {
             "category": self.category,
             "symbol": sym,
@@ -580,9 +730,8 @@ class BybitClient(BaseRestClient):
             "price": self._dec_str(px_dec, strict_precision=price_precision),
             "timeInForce": "GTC",
         }
-        pos_idx = self._resolve_position_idx(pos_side) if self.category == "linear" else None
-        if pos_idx is not None:
-            body["positionIdx"] = pos_idx
+        if self.category == "linear":
+            body["positionIdx"] = self._resolve_position_idx(pos_side, symbol=symbol)
         if reduce_only and self.category == "linear":
             body["reduceOnly"] = True
         if client_order_id:
@@ -614,8 +763,62 @@ class BybitClient(BaseRestClient):
             raise LiveTradingError("Bybit get_order requires order_id or client_order_id")
         raw = self._signed_request("GET", "/v5/order/realtime", params=params)
         lst = (((raw.get("result") or {}).get("list")) if isinstance(raw, dict) else None) or []
+        if not lst:
+            raw = self._signed_request("GET", "/v5/order/history", params=params)
+            lst = (((raw.get("result") or {}).get("list")) if isinstance(raw, dict) else None) or []
         first: Dict[str, Any] = lst[0] if isinstance(lst, list) and lst else {}
         return first if isinstance(first, dict) else {}
+
+    def get_executions(
+        self,
+        *,
+        symbol: str = "",
+        order_id: str = "",
+        client_order_id: str = "",
+    ) -> Dict[str, Any]:
+        """Return authoritative per-fill records for one Bybit order."""
+        params: Dict[str, Any] = {"category": self.category, "limit": 100}
+        if order_id:
+            params["orderId"] = str(order_id)
+        elif client_order_id:
+            params["orderLinkId"] = str(client_order_id)
+        elif symbol:
+            params["symbol"] = to_bybit_symbol(symbol)
+        else:
+            raise LiveTradingError("Bybit get_executions requires an order id or symbol")
+        return self._signed_request("GET", "/v5/execution/list", params=params)
+
+    def _execution_fee_breakdown(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+        client_order_id: str = "",
+    ) -> Dict[str, float]:
+        raw = self.get_executions(
+            symbol=symbol,
+            order_id=order_id,
+            client_order_id=client_order_id,
+        )
+        rows = (((raw.get("result") or {}).get("list")) if isinstance(raw, dict) else None) or []
+        fees: Dict[str, float] = {}
+        if not isinstance(rows, list):
+            return fees
+        default_ccy = "USDT" if self.category == "linear" else ""
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if order_id and str(row.get("orderId") or "") != str(order_id):
+                continue
+            try:
+                amount = abs(float(row.get("execFee") or 0.0))
+            except (TypeError, ValueError):
+                amount = 0.0
+            if amount <= 0:
+                continue
+            currency = str(row.get("feeCurrency") or default_ccy).strip().upper() or "UNKNOWN"
+            fees[currency] = fees.get(currency, 0.0) + amount
+        return fees
 
     def wait_for_fill(
         self,
@@ -647,21 +850,20 @@ class BybitClient(BaseRestClient):
             # Extract fee from cumExecFee (Bybit API field for cumulative execution fee)
             fee = 0.0
             fee_ccy = ""
+            fees_by_ccy: Dict[str, float] = {}
             fee_detail = last.get("cumFeeDetail") if isinstance(last, dict) else None
             if isinstance(fee_detail, dict) and fee_detail:
-                total_fee = 0.0
-                fee_keys = []
                 for k, v in fee_detail.items():
                     try:
                         fv = abs(float(v or 0.0))
                     except Exception:
                         fv = 0.0
                     if fv > 0:
-                        total_fee += fv
-                        fee_keys.append(str(k))
-                fee = total_fee
-                if len(fee_keys) == 1:
-                    fee_ccy = fee_keys[0]
+                        key = str(k or "").strip().upper() or "UNKNOWN"
+                        fees_by_ccy[key] = fees_by_ccy.get(key, 0.0) + fv
+                fee = sum(fees_by_ccy.values())
+                if len(fees_by_ccy) == 1:
+                    fee_ccy = next(iter(fees_by_ccy))
             if fee <= 0:
                 try:
                     fee = abs(float(last.get("cumExecFee") or 0.0))
@@ -669,19 +871,33 @@ class BybitClient(BaseRestClient):
                     fee = 0.0
                 if fee > 0 and self.category == "linear":
                     fee_ccy = "USDT"
+                    fees_by_ccy = {fee_ccy: fee}
+            if filled > 0:
+                try:
+                    execution_fees = self._execution_fee_breakdown(
+                        symbol=symbol,
+                        order_id=str(order_id or ""),
+                        client_order_id=str(client_order_id or ""),
+                    )
+                    if execution_fees:
+                        fees_by_ccy = execution_fees
+                        fee = sum(execution_fees.values())
+                        fee_ccy = next(iter(execution_fees)) if len(execution_fees) == 1 else "MIXED"
+                except Exception as exc:
+                    logger.debug("Bybit execution fee query failed for order %s: %s", order_id, exc)
             # cumExecFee / cumFeeDetail can lag slightly after fill shows up.
             if filled > 0 and avg_price > 0:
                 if fee <= 0 and not timed_out:
                     time.sleep(float(poll_interval_sec or 0.5))
                     continue
-                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "status": status, "order": last}
+                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "fees_by_ccy": fees_by_ccy, "status": status, "order": last}
             if status.lower() in ("filled", "cancelled", "canceled", "rejected"):
                 if fee <= 0 and filled > 0 and avg_price > 0 and not timed_out:
                     time.sleep(float(poll_interval_sec or 0.5))
                     continue
-                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "status": status, "order": last}
+                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "fees_by_ccy": fees_by_ccy, "status": status, "order": last}
             if timed_out:
-                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "status": status, "order": last}
+                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "fees_by_ccy": fees_by_ccy, "status": status, "order": last}
             time.sleep(float(poll_interval_sec or 0.5))
 
     def get_positions(
@@ -696,6 +912,8 @@ class BybitClient(BaseRestClient):
         - Pass ``symbol`` (e.g. ETH/USDT) to query one contract.
         - Omit ``symbol`` and pass ``settle_coin`` (default USDT) to list all USDT-linear positions.
         """
+        if self.category == "spot":
+            return self.get_spot_holdings(symbol=symbol)
         if self.category != "linear":
             raise LiveTradingError("Bybit positions are only supported for linear category in this client")
         params: Dict[str, Any] = {"category": "linear"}
@@ -734,13 +952,51 @@ class BybitClient(BaseRestClient):
             lv = 1
         if lv < 1:
             lv = 1
-        # Bybit leverage caps vary per symbol; keep best-effort.
+        try:
+            info = self.get_instrument_info(category="linear", symbol=sym) or {}
+        except Exception:
+            info = {}
+        leverage_filter = info.get("leverageFilter") if isinstance(info, dict) else {}
+        try:
+            max_leverage = int(
+                float((leverage_filter or {}).get("maxLeverage") or 0)
+            )
+        except (TypeError, ValueError):
+            max_leverage = 0
+        if max_leverage > 0 and lv > max_leverage:
+            raise LiveTradingError(
+                f"Bybit leverage {lv}x exceeds the current {sym} maximum {max_leverage}x"
+            )
         body = {"category": "linear", "symbol": sym, "buyLeverage": str(lv), "sellLeverage": str(lv)}
         try:
             resp = self._signed_request("POST", "/v5/position/set-leverage", json_body=body)
             ok = isinstance(resp, dict) and (resp.get("retCode") in (0, "0", None, ""))
             return bool(ok)
-        except Exception:
+        except Exception as exc:
+            text = str(exc).lower()
+            if "110043" in text or "leverage not modified" in text:
+                return True
             return False
 
-
+    def set_margin_mode(self, margin_mode: str) -> bool:
+        if self.category != "linear":
+            return False
+        mode = str(margin_mode or "cross").strip().lower()
+        if mode in ("cross", "crossed"):
+            requested = "REGULAR_MARGIN"
+        elif mode in ("isolated", "iso"):
+            requested = "ISOLATED_MARGIN"
+        else:
+            return False
+        try:
+            resp = self._signed_request(
+                "POST",
+                "/v5/account/set-margin-mode",
+                json_body={"setMarginMode": requested},
+            )
+            return isinstance(resp, dict) and resp.get("retCode") in (0, "0", None, "")
+        except Exception as exc:
+            text = str(exc).lower()
+            if "not modified" in text or "110026" in text:
+                return True
+            return False

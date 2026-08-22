@@ -4,9 +4,11 @@ ARG BASE_IMAGE=python:3.12-slim-bookworm
 FROM ${BASE_IMAGE}
 
 # BUILD_REGION switches apt/PyPI sources:
-#   cn      -> Aliyun mirrors first, fall back to official on failure (default; zero-config for China)
-#   global  -> use Debian/PyPI official directly, skip Aliyun entirely (used by GitHub Actions runners)
-ARG BUILD_REGION=cn
+#   global  -> use Debian/PyPI official directly, skip Aliyun entirely (default)
+#   cn      -> Aliyun mirrors first, fall back to official on failure
+ARG BUILD_REGION=global
+ARG APP_VERSION=""
+ARG GIT_TAG=""
 
 WORKDIR /app
 
@@ -40,37 +42,50 @@ RUN set -eux; \
       python3-dev \
       libffi-dev \
       libssl-dev \
+      gosu \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY requirements.txt requirements.lock ./
 
 # Pip: when BUILD_REGION=cn, try Aliyun PyPI first; on any failure retry default index.
 # Otherwise install from PyPI official directly.
 RUN set -eux; \
     if [ "$BUILD_REGION" = "cn" ]; then \
+      python -m pip install --no-cache-dir --timeout 180 --retries 5 --upgrade \
+          -i https://mirrors.aliyun.com/pypi/simple/ \
+          "pip>=26.1.2,<27"; \
       pip install --no-cache-dir --prefer-binary --timeout 180 \
           -i https://mirrors.aliyun.com/pypi/simple/ \
-          -r requirements.txt \
-        || pip install --no-cache-dir --prefer-binary --timeout 180 -r requirements.txt; \
+          -r requirements.lock \
+        || pip install --no-cache-dir --prefer-binary --timeout 180 -r requirements.lock; \
     else \
-      pip install --no-cache-dir --prefer-binary --timeout 180 -r requirements.txt; \
+      python -m pip install --no-cache-dir --timeout 180 --retries 5 --upgrade "pip>=26.1.2,<27"; \
+      pip install --no-cache-dir --prefer-binary --timeout 180 -r requirements.lock; \
     fi; \
     apt-get purge -y --auto-remove build-essential python3-dev libffi-dev libssl-dev; \
     rm -rf /var/lib/apt/lists/*
 
 COPY . .
 
+RUN groupadd --gid 10001 quantdinger \
+    && useradd --uid 10001 --gid quantdinger --create-home --shell /usr/sbin/nologin quantdinger
+
+RUN printf '%s\n' "$APP_VERSION" > /app/BUILD_VERSION \
+    && printf '%s\n' "$GIT_TAG" > /app/BUILD_GIT_TAG
+
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
     && chmod +x /usr/local/bin/docker-entrypoint.sh
 
-RUN mkdir -p logs data/memory
+RUN mkdir -p logs data/memory \
+    && chown -R quantdinger:quantdinger /app/logs /app/data
 
 EXPOSE 5000
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHON_API_HOST=0.0.0.0
 ENV PYTHON_API_PORT=5000
+ENV HOME=/home/quantdinger
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["gunicorn", "-c", "gunicorn_config.py", "run:app"]

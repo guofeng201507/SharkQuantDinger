@@ -5,88 +5,33 @@ Handles login, logout, registration, password reset, and OAuth authentication.
 Supports both multi-user (database) and single-user (legacy) modes.
 """
 import os
-from flask import Blueprint, request, jsonify, g, redirect
-from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
+from flask import g, jsonify, redirect, request
+from app.openapi.blueprint import HumanBlueprint as Blueprint
+from app.openapi.schemas.high_risk import (
+    ChangePasswordRequestSchema,
+    LoginRequestSchema,
+    LoginResponseSchema,
+    RegisterRequestSchema,
+    ResetPasswordRequestSchema,
+)
 from app.config.settings import Config
+from app.services.auth_session import (
+    build_frontend_login_redirect,
+    get_client_ip,
+    get_user_agent,
+    issue_login_token,
+    touch_last_login,
+)
 from app.utils.auth import generate_token, login_required, authenticate_legacy
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-auth_bp = Blueprint('auth', __name__)
+auth_blp = Blueprint('auth', __name__)
 
 def _build_frontend_login_redirect(frontend_url: str, **params) -> str:
-    """
-    Build a redirect URL to the frontend login page for OAuth flows.
-
-    Supports both:
-    - PC (hash mode, path `/#/user/login`) — default behavior when only an origin
-      is supplied via FRONTEND_URL.
-    - Mobile / SPA history mode (e.g. `https://m.example.com/login`) — when the
-      caller provides a full URL with a real path (and optional query/hash), we
-      preserve that path instead of overwriting it with `/#/user/login`.
-
-    The decision rule:
-    1. If `frontend_url` contains a hash fragment (starts with `#/`), treat it as
-       a PC hash-mode URL and normalize to `{origin}/#/user/login`.
-    2. If `frontend_url` has a path other than `/` or empty, preserve the full
-       URL (origin + path) and just append the OAuth params as query string.
-    3. Otherwise (origin only), fall back to PC `/#/user/login`.
-    """
-    base = (frontend_url or '').strip().rstrip('/')
-    if not base:
-        base = 'http://localhost:8080'
-
-    # Ensure we can parse the URL
-    candidate = base if '://' in base else f'https://{base}'
-    try:
-        parsed = urlparse(candidate)
-    except Exception:
-        parsed = None
-
-    origin = ''
-    has_real_path = False
-    has_hash_route = False
-
-    if parsed and parsed.scheme and parsed.netloc:
-        origin = f"{parsed.scheme}://{parsed.netloc}".rstrip('/')
-        # Hash-mode PC login URL, e.g. https://pc.example.com/#/user/login
-        if parsed.fragment:
-            has_hash_route = True
-        path_part = (parsed.path or '').rstrip('/')
-        if path_part and path_part != '':
-            has_real_path = True
-    else:
-        origin = base
-
-    clean_params = {k: v for k, v in params.items() if v is not None and v != ''}
-    qs = urlencode(clean_params)
-
-    if has_hash_route:
-        # PC / hash-mode: always normalize to /#/user/login
-        login_url = f"{origin}/#/user/login"
-        return f"{login_url}?{qs}" if qs else login_url
-
-    if has_real_path:
-        # SPA history-mode (mobile etc.) — keep the caller-provided path and
-        # merge OAuth params into existing query string.
-        existing_qs = dict(parse_qsl(parsed.query or '', keep_blank_values=True))
-        existing_qs.update(clean_params)
-        merged_qs = urlencode(existing_qs)
-        rebuilt = urlunparse((
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            parsed.params,
-            merged_qs,
-            ''  # drop the fragment deliberately for history-mode SPAs
-        ))
-        return rebuilt
-
-    # Origin only — fall back to PC hash route for backward compatibility
-    login_url = f"{origin}/#/user/login"
-    return f"{login_url}?{qs}" if qs else login_url
-
+    """Back-compatible wrapper for OAuth redirect callers."""
+    return build_frontend_login_redirect(frontend_url, **params)
 
 def _is_single_user_mode() -> bool:
     """Check if system is in single-user (legacy) mode"""
@@ -94,25 +39,56 @@ def _is_single_user_mode() -> bool:
 
 
 def _get_client_ip() -> str:
-    """Get client IP address from request"""
-    # Check for proxy headers
-    if request.headers.get('X-Forwarded-For'):
-        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
-    if request.headers.get('X-Real-IP'):
-        return request.headers.get('X-Real-IP')
-    return request.remote_addr or '0.0.0.0'
+    """Back-compatible wrapper for request client IP."""
+    return get_client_ip()
 
 
 def _get_user_agent() -> str:
-    """Get user agent from request"""
-    return request.headers.get('User-Agent', '')[:500]
+    """Back-compatible wrapper for request user agent."""
+    return get_user_agent()
+
+
+def _userinfo_must_change_initial_password(user_id: int) -> bool:
+    """Whether the UI should prompt the user to change their bootstrap password."""
+    try:
+        from app.services.user_service import get_user_service
+        return get_user_service().must_change_initial_password(int(user_id))
+    except Exception:
+        return False
+
+
+def _build_userinfo(user: dict, user_id: int, username: str) -> dict:
+    return {
+        'id': user.get('id') or user.get('user_id', user_id),
+        'username': user.get('username', username),
+        'nickname': user.get('nickname', 'User'),
+        'avatar': user.get('avatar', '/avatar2.jpg'),
+        'timezone': str(user.get('timezone') or '').strip(),
+        'role': {
+            'id': user.get('role', 'admin'),
+            'permissions': _get_permissions(user.get('role', 'admin'))
+        },
+        'must_change_initial_password': _userinfo_must_change_initial_password(user_id),
+    }
+
+
+def _issue_login_token(user: dict, user_id: int, username: str) -> tuple:
+    return issue_login_token(
+        user,
+        user_id,
+        username,
+        _get_permissions(user.get('role', 'admin')),
+    )
+
+def _touch_last_login(user_id: int) -> None:
+    touch_last_login(user_id)
 
 
 # =============================================================================
 # Security Config Endpoint
 # =============================================================================
 
-@auth_bp.route('/security-config', methods=['GET'])
+@auth_blp.route('/security-config', methods=['GET'])
 def get_security_config():
     """
     Get public security configuration for frontend.
@@ -133,12 +109,42 @@ def get_security_config():
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
+@auth_blp.route('/turnstile-clearance', methods=['POST'])
+def issue_turnstile_clearance():
+    """Exchange a fresh Turnstile token for a short-lived local clearance."""
+    ip_address = _get_client_ip()
+
+    try:
+        from app.services.security_service import get_security_service
+        security = get_security_service()
+
+        data = request.get_json() or {}
+        turnstile_token = data.get('turnstile_token') or data.get('token')
+        turnstile_ok, turnstile_msg = security.verify_turnstile(turnstile_token, ip_address)
+        if not turnstile_ok:
+            return jsonify({'code': 0, 'msg': turnstile_msg, 'data': None}), 400
+
+        return jsonify({
+            'code': 1,
+            'msg': 'success',
+            'data': {
+                'turnstile_clearance': security.issue_turnstile_clearance(ip_address),
+                'expires_in': security.turnstile_clearance_ttl_seconds,
+            },
+        })
+    except Exception as e:
+        logger.error(f"issue_turnstile_clearance error: {e}")
+        return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
+
+
 # =============================================================================
 # Login Endpoint (Enhanced with security)
 # =============================================================================
 
-@auth_bp.route('/login', methods=['POST'])
-def login():
+@auth_blp.route('/login', methods=['POST'])
+@auth_blp.arguments(LoginRequestSchema, location="json")
+@auth_blp.response(200, LoginResponseSchema)
+def login(data):
     """
     User login endpoint.
     
@@ -158,19 +164,20 @@ def login():
         from app.services.security_service import get_security_service
         security = get_security_service()
         
-        data = request.get_json()
-        if not data:
-            return jsonify({'code': 400, 'msg': 'No data provided', 'data': None}), 400
-        
         username = data.get('username') or data.get('account')
         password = data.get('password')
         turnstile_token = data.get('turnstile_token')
+        turnstile_clearance = data.get('turnstile_clearance')
         
         if not username or not password:
             return jsonify({'code': 400, 'msg': 'Missing username/email or password', 'data': None}), 400
         
         # Step 1: Verify Turnstile (if enabled)
-        turnstile_ok, turnstile_msg = security.verify_turnstile(turnstile_token, ip_address)
+        turnstile_ok, turnstile_msg = security.verify_turnstile_or_clearance(
+            token=turnstile_token,
+            clearance=turnstile_clearance,
+            ip_address=ip_address,
+        )
         if not turnstile_ok:
             return jsonify({'code': 0, 'msg': turnstile_msg, 'data': None}), 400
         
@@ -185,7 +192,7 @@ def login():
         if not _is_single_user_mode():
             try:
                 from app.services.user_service import get_user_service
-                user = get_user_service().authenticate(username, password)
+                user = get_user_service().authenticate(username, password, update_last_login=False)
                 
                 # Check if user has no password set (code-login user)
                 if user and user.get('_no_password'):
@@ -203,8 +210,8 @@ def login():
             except Exception as e:
                 logger.warning(f"Multi-user auth failed, trying legacy: {e}")
         
-        # Fallback to legacy single-user mode
-        if not user:
+        # Legacy env-admin auth is only valid in explicit single-user mode.
+        if not user and _is_single_user_mode():
             user = authenticate_legacy(username, password)
         
         if not user:
@@ -224,46 +231,58 @@ def login():
         if user.get('status') == 'pending':
             return jsonify({'code': 0, 'msg': 'Account is pending activation', 'data': None}), 403
         
-        # Step 4: Increment token_version (invalidates old sessions for single-client login)
         user_id = user.get('id') or user.get('user_id', 1)
+
         try:
-            from app.services.user_service import get_user_service
-            new_token_version = get_user_service().increment_token_version(user_id)
+            from app.services.mfa_service import get_mfa_service
+            mfa = get_mfa_service()
+            need_mfa, reason = mfa.needs_login_mfa(int(user_id), ip_address, user_agent)
+            if need_mfa:
+                challenge = mfa.create_login_challenge(int(user_id), reason, ip_address, user_agent)
+                security.record_login_attempt(ip_address, 'ip', True, ip_address, user_agent)
+                security.record_login_attempt(username, 'account', True, ip_address, user_agent)
+                security.clear_login_attempts(ip_address, 'ip')
+                security.clear_login_attempts(username, 'account')
+                security.log_security_event(
+                    'mfa_required',
+                    int(user_id),
+                    ip_address,
+                    user_agent,
+                    {'username': username, 'reason': reason}
+                )
+                return jsonify({
+                    'code': 1,
+                    'msg': 'MFA verification required',
+                    'data': {
+                        'mfa_required': True,
+                        **challenge
+                    }
+                })
         except Exception as e:
-            logger.warning(f"Failed to increment token_version: {e}")
-            new_token_version = 1
-        
-        # Step 5: Generate token with new token_version
-        token = generate_token(
-            user_id=user_id,
-            username=user.get('username', username),
-            role=user.get('role', 'admin'),
-            token_version=new_token_version  # 包含新的 token_version
-        )
+            logger.error(f"MFA check failed after password authentication: {e}")
+            return jsonify({'code': 0, 'msg': 'MFA service unavailable', 'data': None}), 503
+
+        token, userinfo = _issue_login_token(user, int(user_id), username)
         
         if not token:
             return jsonify({'code': 500, 'msg': 'Token generation error', 'data': None}), 500
+
+        _touch_last_login(int(user_id))
         
-        # Step 6: Record successful login
+        # Step 4: Record successful login
         security.record_login_attempt(ip_address, 'ip', True, ip_address, user_agent)
         security.record_login_attempt(username, 'account', True, ip_address, user_agent)
         security.clear_login_attempts(ip_address, 'ip')
         security.clear_login_attempts(username, 'account')
-        security.log_security_event('login_success', user.get('id'), ip_address, user_agent)
-        
-        # Build user info for frontend
-        userinfo = {
-            'id': user.get('id') or user.get('user_id', 1),
-            'username': user.get('username', username),
-            'nickname': user.get('nickname', 'User'),
-            'avatar': user.get('avatar', '/avatar2.jpg'),
-            'timezone': str(user.get('timezone') or '').strip(),
-            'role': {
-                'id': user.get('role', 'admin'),
-                'permissions': _get_permissions(user.get('role', 'admin'))
-            }
-        }
-        
+        from app.services.login_notify import notify_successful_login
+        notify_successful_login(
+            user_id=int(user.get('id') or user_id),
+            action='login_success',
+            ip_address=ip_address,
+            user_agent=user_agent,
+            extra_details={'method': 'password'},
+        )
+
         return jsonify({
             'code': 1,
             'msg': 'Login successful',
@@ -278,11 +297,78 @@ def login():
         return jsonify({'code': 500, 'msg': str(e), 'data': None}), 500
 
 
+@auth_blp.route('/mfa/verify-login', methods=['POST'])
+def verify_login_mfa():
+    """Complete a password login that was paused for TOTP verification."""
+    ip_address = _get_client_ip()
+    user_agent = _get_user_agent()
+
+    try:
+        data = request.get_json() or {}
+        challenge_id = data.get('challenge_id') or ''
+        code = data.get('code') or ''
+
+        from app.services.mfa_service import get_mfa_service
+        from app.services.security_service import get_security_service
+        from app.services.user_service import get_user_service
+
+        security = get_security_service()
+        ok, msg, user_id = get_mfa_service().verify_login_challenge(challenge_id, code)
+        if not ok:
+            security.log_security_event(
+                'mfa_failed',
+                user_id,
+                ip_address,
+                user_agent,
+                {'reason': msg}
+            )
+            return jsonify({'code': 0, 'msg': msg or 'Invalid verification code', 'data': None}), 401
+
+        user = get_user_service().get_user_by_id(int(user_id))
+        if not user or user.get('status') != 'active':
+            return jsonify({'code': 0, 'msg': 'User not found or disabled', 'data': None}), 403
+
+        username = user.get('username') or ''
+        token, userinfo = _issue_login_token(user, int(user_id), username)
+        if not token:
+            return jsonify({'code': 500, 'msg': 'Token generation error', 'data': None}), 500
+
+        _touch_last_login(int(user_id))
+
+        from app.services.login_notify import notify_successful_login
+        notify_successful_login(
+            user_id=int(user_id),
+            action='mfa_login_success',
+            ip_address=ip_address,
+            user_agent=user_agent,
+            extra_details={'method': 'password_totp'},
+        )
+        security.log_security_event(
+            'mfa_success',
+            int(user_id),
+            ip_address,
+            user_agent,
+            {'method': 'totp'}
+        )
+
+        return jsonify({
+            'code': 1,
+            'msg': 'Login successful',
+            'data': {
+                'token': token,
+                'userinfo': userinfo
+            }
+        })
+    except Exception as e:
+        logger.error(f"verify_login_mfa error: {e}")
+        return jsonify({'code': 500, 'msg': str(e), 'data': None}), 500
+
+
 # =============================================================================
 # Email Code Login
 # =============================================================================
 
-@auth_bp.route('/login-code', methods=['POST'])
+@auth_blp.route('/login-code', methods=['POST'])
 def login_with_code():
     """
     Login with email verification code (quick login / register).
@@ -291,7 +377,6 @@ def login_with_code():
     Request body:
         email: str
         code: str (verification code)
-        turnstile_token: str (optional)
         referral_code: str (optional, referrer's user ID - only for new users)
     """
     ip_address = _get_client_ip()
@@ -314,7 +399,6 @@ def login_with_code():
         
         email = (data.get('email') or '').strip().lower()
         code = data.get('code', '').strip()
-        turnstile_token = data.get('turnstile_token')
         referral_code = data.get('referral_code', '').strip()
         
         # Validate inputs
@@ -323,11 +407,6 @@ def login_with_code():
         
         if not code:
             return jsonify({'code': 0, 'msg': 'Verification code is required', 'data': None}), 400
-        
-        # Verify Turnstile
-        turnstile_ok, turnstile_msg = security.verify_turnstile(turnstile_token, ip_address)
-        if not turnstile_ok:
-            return jsonify({'code': 0, 'msg': turnstile_msg, 'data': None}), 400
         
         # Verify email code
         code_valid, code_msg = email_service.verify_code(email, code, 'login')
@@ -417,6 +496,36 @@ def login_with_code():
             security.log_security_event('login_blocked', user.get('id'), ip_address, user_agent,
                                        {'reason': 'account_disabled'})
             return jsonify({'code': 0, 'msg': 'Account is disabled', 'data': None}), 403
+
+        if user.get('status') == 'pending':
+            return jsonify({'code': 0, 'msg': 'Account is pending activation', 'data': None}), 403
+
+        if not is_new_user:
+            try:
+                from app.services.mfa_service import get_mfa_service
+                mfa = get_mfa_service()
+                user_id_for_mfa = int(user.get('id'))
+                need_mfa, reason = mfa.needs_login_mfa(user_id_for_mfa, ip_address, user_agent)
+                if need_mfa:
+                    challenge = mfa.create_login_challenge(user_id_for_mfa, reason, ip_address, user_agent)
+                    security.log_security_event(
+                        'mfa_required',
+                        user_id_for_mfa,
+                        ip_address,
+                        user_agent,
+                        {'email': email, 'reason': reason, 'method': 'email_code'}
+                    )
+                    return jsonify({
+                        'code': 1,
+                        'msg': 'MFA verification required',
+                        'data': {
+                            'mfa_required': True,
+                            **challenge
+                        }
+                    })
+            except Exception as e:
+                logger.error(f"MFA check failed after email-code authentication: {e}")
+                return jsonify({'code': 0, 'msg': 'MFA service unavailable', 'data': None}), 503
         
         # Increment token_version (invalidates old sessions for single-client login)
         try:
@@ -455,9 +564,15 @@ def login_with_code():
         except Exception as e:
             logger.error(f"Failed to update last_login_at for user_id={user.get('id')}: {e}")
         
-        # Log login
-        security.log_security_event('login_via_code', user['id'], ip_address, user_agent)
-        
+        from app.services.login_notify import notify_successful_login
+        notify_successful_login(
+            user_id=int(user['id']),
+            action='login_via_code',
+            ip_address=ip_address,
+            user_agent=user_agent,
+            extra_details={'method': 'email_code', 'is_new_user': bool(is_new_user)},
+        )
+
         return jsonify({
             'code': 1,
             'msg': 'Login successful' + (' (new account created)' if is_new_user else ''),
@@ -488,7 +603,7 @@ def login_with_code():
 # Registration Endpoints
 # =============================================================================
 
-@auth_bp.route('/send-code', methods=['POST'])
+@auth_blp.route('/send-code', methods=['POST'])
 def send_verification_code():
     """
     Send verification code to email.
@@ -514,6 +629,7 @@ def send_verification_code():
         email = (data.get('email') or '').strip().lower()
         code_type = data.get('type', 'register')
         turnstile_token = data.get('turnstile_token')
+        turnstile_clearance = data.get('turnstile_clearance')
         
         # Validate email
         if not email or not email_service.is_valid_email(email):
@@ -535,7 +651,11 @@ def send_verification_code():
         
         # Verify Turnstile (skip for authenticated change_password requests)
         if not skip_turnstile:
-            turnstile_ok, turnstile_msg = security.verify_turnstile(turnstile_token, ip_address)
+            turnstile_ok, turnstile_msg = security.verify_turnstile_or_clearance(
+                token=turnstile_token,
+                clearance=turnstile_clearance,
+                ip_address=ip_address,
+            )
             if not turnstile_ok:
                 return jsonify({'code': 0, 'msg': turnstile_msg, 'data': None}), 400
         
@@ -578,8 +698,10 @@ def send_verification_code():
         return jsonify({'code': 0, 'msg': 'Failed to send verification code', 'data': None}), 500
 
 
-@auth_bp.route('/register', methods=['POST'])
-def register():
+@auth_blp.route('/register', methods=['POST'])
+@auth_blp.arguments(RegisterRequestSchema, location="json")
+@auth_blp.response(200, LoginResponseSchema)
+def register(data):
     """
     Register new user with email verification.
     
@@ -588,7 +710,6 @@ def register():
         code: str (verification code)
         username: str
         password: str
-        turnstile_token: str (optional)
         referral_code: str (optional, referrer's user ID)
     """
     ip_address = _get_client_ip()
@@ -609,15 +730,10 @@ def register():
         user_service = get_user_service()
         billing_service = get_billing_service()
         
-        data = request.get_json()
-        if not data:
-            return jsonify({'code': 0, 'msg': 'No data provided', 'data': None}), 400
-        
         email = (data.get('email') or '').strip().lower()
         code = data.get('code', '').strip()
         username = (data.get('username') or '').strip()
         password = data.get('password', '')
-        turnstile_token = data.get('turnstile_token')
         referral_code = data.get('referral_code', '').strip()
         
         # Validate inputs
@@ -639,11 +755,6 @@ def register():
         pwd_valid, pwd_msg = security.validate_password_strength(password)
         if not pwd_valid:
             return jsonify({'code': 0, 'msg': pwd_msg, 'data': None}), 400
-        
-        # Verify Turnstile
-        turnstile_ok, turnstile_msg = security.verify_turnstile(turnstile_token, ip_address)
-        if not turnstile_ok:
-            return jsonify({'code': 0, 'msg': turnstile_msg, 'data': None}), 400
         
         # Verify email code
         code_valid, code_msg = email_service.verify_code(email, code, 'register')
@@ -770,8 +881,9 @@ def register():
         return jsonify({'code': 0, 'msg': 'Registration failed', 'data': None}), 500
 
 
-@auth_bp.route('/reset-password', methods=['POST'])
-def reset_password():
+@auth_blp.route('/reset-password', methods=['POST'])
+@auth_blp.arguments(ResetPasswordRequestSchema, location="json")
+def reset_password(data):
     """
     Reset password with email verification.
     
@@ -779,7 +891,6 @@ def reset_password():
         email: str
         code: str (verification code)
         new_password: str
-        turnstile_token: str (optional)
     """
     ip_address = _get_client_ip()
     user_agent = _get_user_agent()
@@ -793,14 +904,9 @@ def reset_password():
         email_service = get_email_service()
         user_service = get_user_service()
         
-        data = request.get_json()
-        if not data:
-            return jsonify({'code': 0, 'msg': 'No data provided', 'data': None}), 400
-        
         email = (data.get('email') or '').strip().lower()
         code = data.get('code', '').strip()
         new_password = data.get('new_password', '')
-        turnstile_token = data.get('turnstile_token')
         
         # Validate inputs
         if not email or not code or not new_password:
@@ -810,11 +916,6 @@ def reset_password():
         pwd_valid, pwd_msg = security.validate_password_strength(new_password)
         if not pwd_valid:
             return jsonify({'code': 0, 'msg': pwd_msg, 'data': None}), 400
-        
-        # Verify Turnstile
-        turnstile_ok, turnstile_msg = security.verify_turnstile(turnstile_token, ip_address)
-        if not turnstile_ok:
-            return jsonify({'code': 0, 'msg': turnstile_msg, 'data': None}), 400
         
         # Verify email code
         code_valid, code_msg = email_service.verify_code(email, code, 'reset_password')
@@ -844,9 +945,10 @@ def reset_password():
         return jsonify({'code': 0, 'msg': 'Password reset failed', 'data': None}), 500
 
 
-@auth_bp.route('/change-password', methods=['POST'])
+@auth_blp.route('/change-password', methods=['POST'])
 @login_required
-def change_password():
+@auth_blp.arguments(ChangePasswordRequestSchema, location="json")
+def change_password(data):
     """
     Change password with email verification (for logged-in users).
     
@@ -866,10 +968,6 @@ def change_password():
         security = get_security_service()
         email_service = get_email_service()
         user_service = get_user_service()
-        
-        data = request.get_json()
-        if not data:
-            return jsonify({'code': 0, 'msg': 'No data provided', 'data': None}), 400
         
         code = data.get('code', '').strip()
         new_password = data.get('new_password', '')
@@ -911,7 +1009,7 @@ def change_password():
 # OAuth Endpoints
 # =============================================================================
 
-@auth_bp.route('/oauth/google', methods=['GET'])
+@auth_blp.route('/oauth/google', methods=['GET'])
 def oauth_google():
     """Redirect to Google OAuth authorization page.
 
@@ -936,7 +1034,7 @@ def oauth_google():
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@auth_bp.route('/oauth/google/callback', methods=['GET'])
+@auth_blp.route('/oauth/google/callback', methods=['GET'])
 def oauth_google_callback():
     """Handle Google OAuth callback"""
     ip_address = _get_client_ip()
@@ -993,10 +1091,15 @@ def oauth_google_callback():
             token_version=new_token_version
         )
         
-        # Log OAuth login
-        security.log_security_event('oauth_login', user_result['id'], ip_address, user_agent,
-                                   {'provider': 'google'})
-        
+        from app.services.login_notify import notify_successful_login
+        notify_successful_login(
+            user_id=int(user_result['id']),
+            action='oauth_login',
+            ip_address=ip_address,
+            user_agent=user_agent,
+            extra_details={'provider': 'google', 'method': 'oauth'},
+        )
+
         # Redirect to frontend with token
         return redirect(_build_frontend_login_redirect(frontend_url, oauth_token=token))
         
@@ -1007,7 +1110,7 @@ def oauth_google_callback():
         return redirect(_build_frontend_login_redirect(frontend_url, oauth_error='server_error'))
 
 
-@auth_bp.route('/oauth/github', methods=['GET'])
+@auth_blp.route('/oauth/github', methods=['GET'])
 def oauth_github():
     """Redirect to GitHub OAuth authorization page.
 
@@ -1030,7 +1133,7 @@ def oauth_github():
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@auth_bp.route('/oauth/github/callback', methods=['GET'])
+@auth_blp.route('/oauth/github/callback', methods=['GET'])
 def oauth_github_callback():
     """Handle GitHub OAuth callback"""
     ip_address = _get_client_ip()
@@ -1085,10 +1188,15 @@ def oauth_github_callback():
             token_version=new_token_version
         )
         
-        # Log OAuth login
-        security.log_security_event('oauth_login', user_result['id'], ip_address, user_agent,
-                                   {'provider': 'github'})
-        
+        from app.services.login_notify import notify_successful_login
+        notify_successful_login(
+            user_id=int(user_result['id']),
+            action='oauth_login',
+            ip_address=ip_address,
+            user_agent=user_agent,
+            extra_details={'provider': 'github', 'method': 'oauth'},
+        )
+
         # Redirect to frontend with token
         return redirect(_build_frontend_login_redirect(frontend_url, oauth_token=token))
         
@@ -1103,13 +1211,13 @@ def oauth_github_callback():
 # Other Endpoints
 # =============================================================================
 
-@auth_bp.route('/logout', methods=['POST'])
+@auth_blp.route('/logout', methods=['POST'])
 def logout():
     """Logout (client removes token; server is stateless)."""
     return jsonify({'code': 1, 'msg': 'Logout successful', 'data': None})
 
 
-@auth_bp.route('/info', methods=['GET'])
+@auth_blp.route('/info', methods=['GET'])
 @login_required
 def get_user_info():
     """Get current user info."""
@@ -1128,11 +1236,12 @@ def get_user_info():
                 logger.warning(f"Failed to get user from database: {e}")
         
         if user_data:
+            uid = user_data.get('id')
             return jsonify({
                 'code': 1,
                 'msg': 'Success',
                 'data': {
-                    'id': user_data.get('id'),
+                    'id': uid,
                     'username': user_data.get('username'),
                     'nickname': user_data.get('nickname', 'User'),
                     'email': user_data.get('email'),
@@ -1141,7 +1250,8 @@ def get_user_info():
                     'role': {
                         'id': user_data.get('role', 'user'),
                         'permissions': _get_permissions(user_data.get('role', 'user'))
-                    }
+                    },
+                    'must_change_initial_password': _userinfo_must_change_initial_password(uid),
                 }
             })
         
@@ -1177,3 +1287,7 @@ def _get_permissions(role: str) -> list:
             return ['dashboard', 'view', 'indicator', 'backtest', 'strategy', 
                     'portfolio', 'settings', 'user_manage', 'credentials']
         return ['dashboard', 'view', 'indicator', 'backtest', 'strategy', 'portfolio']
+
+# openapi-compat: legacy import name
+auth_bp = auth_blp
+

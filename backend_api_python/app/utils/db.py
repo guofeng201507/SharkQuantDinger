@@ -34,9 +34,14 @@ from app.utils.db_postgres import (
 _CRITICAL_TABLES = (
     'qd_users',
     'pending_orders',
+    'qd_strategy_equity_snapshots',
     'qd_strategy_positions',
+    'qd_position_reservations',
     'qd_strategies_trading',
     'qd_analysis_memory',
+    'qd_strategy_commands',
+    'qd_strategy_runtime_leases',
+    'qd_worker_heartbeats',
 )
 
 
@@ -50,7 +55,7 @@ def is_postgres() -> bool:
     return True
 
 
-def init_database():
+def init_database(*, strict_migrations: bool = False):
     """Initialize the database connection, apply schema, and probe permissions.
 
     Two deployment styles have to land here without diverging:
@@ -78,7 +83,7 @@ def init_database():
     logger.info("PostgreSQL connection verified")
 
     if os.getenv('SKIP_AUTO_MIGRATE', '').lower() not in ('1', 'true', 'yes'):
-        _apply_init_sql(logger)
+        _apply_init_sql(logger, strict=strict_migrations)
     else:
         logger.info("SKIP_AUTO_MIGRATE is set; not running init.sql on boot")
 
@@ -95,7 +100,15 @@ def _resolve_init_sql_path() -> Path:
     return Path(__file__).resolve().parent.parent.parent / 'migrations' / 'init.sql'
 
 
-def _apply_init_sql(logger):
+def _resolve_market_symbols_sql_path() -> Path:
+    return Path(__file__).resolve().parent.parent.parent / 'migrations' / 'market_symbols_master.sql'
+
+
+def _resolve_strategy_templates_sql_path() -> Path:
+    return Path(__file__).resolve().parent.parent.parent / 'migrations' / 'strategy_v2_templates.sql'
+
+
+def _apply_init_sql(logger, *, strict: bool = False):
     """Run ``migrations/init.sql`` idempotently.
 
     Failures are downgraded to a warning rather than aborting startup — the
@@ -105,6 +118,8 @@ def _apply_init_sql(logger):
     """
     init_sql = _resolve_init_sql_path()
     if not init_sql.exists():
+        if strict:
+            raise FileNotFoundError(f"Required migration file is missing: {init_sql}")
         logger.warning(
             "init.sql not found at %s — skipping auto-migrate. "
             "If you're on a fresh local PG, run it manually before starting the backend.",
@@ -113,7 +128,14 @@ def _apply_init_sql(logger):
         return
 
     try:
-        sql_text = init_sql.read_text(encoding='utf-8')
+        sql_parts = [init_sql.read_text(encoding='utf-8')]
+        symbols_sql = _resolve_market_symbols_sql_path()
+        if symbols_sql.exists():
+            sql_parts.append(symbols_sql.read_text(encoding='utf-8'))
+        templates_sql = _resolve_strategy_templates_sql_path()
+        if templates_sql.exists():
+            sql_parts.append(templates_sql.read_text(encoding='utf-8'))
+        sql_text = "\n\n".join(sql_parts)
         with get_db_connection() as conn:
             cur = conn.cursor()
             try:
@@ -121,8 +143,15 @@ def _apply_init_sql(logger):
             finally:
                 cur.close()
             conn.commit()
-        logger.info("Applied %s (%d bytes)", init_sql.name, init_sql.stat().st_size)
+        total_size = init_sql.stat().st_size
+        if symbols_sql.exists():
+            total_size += symbols_sql.stat().st_size
+        if templates_sql.exists():
+            total_size += templates_sql.stat().st_size
+        logger.info("Applied migrations seed SQL (%d bytes)", total_size)
     except Exception as exc:
+        if strict:
+            raise
         logger.warning(
             "Auto-migrate failed (continuing with existing schema): %s. "
             "If this is a permission error, run 'ALTER TABLE ... OWNER TO <db_user>' "

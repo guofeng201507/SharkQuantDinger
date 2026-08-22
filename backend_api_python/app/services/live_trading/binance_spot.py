@@ -13,21 +13,24 @@ from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlencode
 
 from app.services.live_trading.base import BaseRestClient, LiveOrderResult, LiveTradingError
+from app.utils.numeric_precision import floor_decimal_to_step, format_decimal
 
 logger = logging.getLogger(__name__)
 from app.services.live_trading.symbols import to_binance_futures_symbol
 
 
 class BinanceSpotClient(BaseRestClient):
+    _BROKER_ID = "A2NAPZAC"
+
     def __init__(self, *, api_key: str, secret_key: str, base_url: str = None, enable_demo_trading: bool = False, timeout_sec: float = 15.0, broker_id: str = ""):
         if not base_url:
-            # Binance Spot Testnet (official): https://testnet.binance.vision
-            base_url = "https://testnet.binance.vision" if enable_demo_trading else "https://api.binance.com"
+            # Binance Spot Demo endpoint.
+            base_url = "https://demo-api.binance.com" if enable_demo_trading else "https://api.binance.com"
 
         super().__init__(base_url=base_url, timeout_sec=timeout_sec)
         self.api_key = (api_key or "").strip()
         self.secret_key = (secret_key or "").strip()
-        self.broker_id = (broker_id or "").strip()
+        self.broker_id = self._BROKER_ID
         if not self.api_key or not self.secret_key:
             raise LiveTradingError("Missing Binance api_key/secret_key")
 
@@ -142,22 +145,46 @@ class BinanceSpotClient(BaseRestClient):
                 return s if s else "0"
 
     @staticmethod
-    def _floor_to_step(value: Decimal, step: Decimal) -> Decimal:
-        if step is None:
-            return value
-        if value <= 0:
-            return Decimal("0")
+    def _decimal_places_from_step(step: Decimal) -> Optional[int]:
+        """Infer max decimal places from a Binance LOT stepSize string."""
         try:
             st = Decimal(step)
         except Exception:
-            st = Decimal("0")
+            return None
         if st <= 0:
-            return value
+            return None
         try:
-            n = (value / st).to_integral_value(rounding=ROUND_DOWN)
-            return n * st
+            normalized = st.normalize()
+            step_str = str(normalized)
+            if "." in step_str:
+                return min(18, max(0, len(step_str.split(".")[1])))
+            return 0
         except Exception:
-            return Decimal("0")
+            return None
+
+    @staticmethod
+    def _pick_lot_filter(fdict: Dict[str, Any], *, for_market: bool) -> Dict[str, Any]:
+        """
+        Choose LOT_SIZE / MARKET_LOT_SIZE filter.
+
+        Binance often sets MARKET_LOT_SIZE.stepSize to 0; in that case we must fall
+        back to LOT_SIZE or market orders fail LOT_SIZE (-1013).
+        """
+        lot = fdict.get("LOT_SIZE") if isinstance(fdict.get("LOT_SIZE"), dict) else {}
+        if not for_market:
+            return lot or {}
+        market = fdict.get("MARKET_LOT_SIZE") if isinstance(fdict.get("MARKET_LOT_SIZE"), dict) else {}
+        try:
+            mstep = Decimal(str((market or {}).get("stepSize") or "0"))
+        except Exception:
+            mstep = Decimal("0")
+        if mstep > 0:
+            return market
+        return lot or {}
+
+    @staticmethod
+    def _floor_to_step(value: Decimal, step: Decimal) -> Decimal:
+        return floor_decimal_to_step(value, step)
 
     def _sign(self, query_string: str) -> str:
         return hmac.new(self.secret_key.encode("utf-8"), query_string.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -199,23 +226,12 @@ class BinanceSpotClient(BaseRestClient):
         return f"{prefix}{raw[:suffix_budget]}"
 
     def _hint_binance_spot_2015(self, text: str) -> str:
-        """
-        Binance -2015 is vague; expand common root causes for operators.
-        This path uses **spot** REST (api.binance.com or testnet.binance.vision), not futures fapi.
-        """
+        """Attach a stable error marker for localized frontend guidance."""
         t = str(text or "")
         if "-2015" not in t:
             return ""
         host = (getattr(self, "base_url", None) or "").replace("https://", "").strip("/") or "?"
-        return (
-            f" | hint[-2015 host={host}]: "
-            "确认 API 为**现货**权限(需勾选「允许现货及杠杆交易」/Enable Spot & Margin Trading)，"
-            "仅有合约权限会失败；"
-            "若凭证开启 Demo/模拟，密钥须来自币安测试网(https://testnet.binance.vision)，"
-            "需到 testnet.binance.vision 用 GitHub 登录后单独申请 Spot Testnet Key，主网 Key 在测试网无效；"
-            "IP 白名单填**本服务出站公网 IP**(Docker/云主机出口，非本机宽带)；"
-            "核对 Key/Secret 无多余空格且与币安控制台一致。"
-        )
+        return f" | BINANCE_SPOT_AUTH_MISMATCH host={host}"
 
     def _signed_request(self, method: str, path: str, *, params: Dict[str, Any]) -> Dict[str, Any]:
         self._ensure_server_time()
@@ -302,8 +318,13 @@ class BinanceSpotClient(BaseRestClient):
                     fdict[str(f.get("filterType"))] = f
         # Also keep precision metadata when available (used to avoid -1111).
         try:
-            qty_prec = first.get("baseAssetPrecision") if isinstance(first, dict) else None
-            # For spot, price precision is typically quotePrecision/quoteAssetPrecision.
+            # ``quantityPrecision`` is the order qty field; ``baseAssetPrecision`` is
+            # wallet precision and is often looser than LOT_SIZE (causes -1013).
+            qty_prec = None
+            if isinstance(first, dict):
+                qty_prec = first.get("quantityPrecision")
+                if qty_prec is None:
+                    qty_prec = first.get("baseAssetPrecision")
             price_prec = None
             if isinstance(first, dict):
                 price_prec = first.get("quotePrecision")
@@ -333,7 +354,7 @@ class BinanceSpotClient(BaseRestClient):
             return value
         try:
             q = Decimal("1").scaleb(-p)
-            return value.quantize(q, rounding=ROUND_DOWN)
+            return floor_decimal_to_step(value, q)
         except Exception:
             return value
 
@@ -366,6 +387,53 @@ class BinanceSpotClient(BaseRestClient):
             return Decimal("0")
         return px
 
+    def _normalize_quote_order_qty(self, *, symbol: str, quote_amount: float) -> Tuple[Decimal, Optional[int]]:
+        """
+        Normalize ``quoteOrderQty`` (USDT notional) for spot MARKET BUY.
+
+        Binance only enforces ``MIN_NOTIONAL`` / ``NOTIONAL`` on this field;
+        we still cap the precision so the wire body never carries scientific
+        notation or 18 trailing zeros (which sometimes triggers ``-1100``).
+        """
+        amt = self._to_dec(quote_amount)
+        if amt <= 0:
+            return (Decimal("0"), None)
+        fdict: Dict[str, Any] = {}
+        try:
+            fdict = self.get_symbol_filters(symbol=symbol) or {}
+        except Exception:
+            fdict = {}
+
+        # Pull min-notional from either NOTIONAL or legacy MIN_NOTIONAL.
+        min_notional = Decimal("0")
+        for key in ("NOTIONAL", "MIN_NOTIONAL"):
+            filt = fdict.get(key) if isinstance(fdict.get(key), dict) else None
+            if not filt:
+                continue
+            for f in ("minNotional", "notional"):
+                v = self._to_dec((filt or {}).get(f) or "0")
+                if v > 0:
+                    min_notional = v
+                    break
+            if min_notional > 0:
+                break
+
+        # Use ``quotePrecision`` (USDT decimals); default 8 (Binance accepts up to 8).
+        quote_precision = None
+        try:
+            meta = fdict.get("_meta") or {}
+            if isinstance(meta, dict) and meta.get("pricePrecision") is not None:
+                quote_precision = int(meta.get("pricePrecision"))
+        except Exception:
+            quote_precision = None
+        if quote_precision is None or quote_precision < 0 or quote_precision > 8:
+            quote_precision = 8
+
+        amt = self._floor_to_precision(amt, quote_precision)
+        if min_notional > 0 and amt < min_notional:
+            return (Decimal("0"), quote_precision)
+        return (amt, quote_precision)
+
     def _normalize_quantity(self, *, symbol: str, quantity: float, for_market: bool) -> Tuple[Decimal, Optional[int]]:
         """
         Normalize spot order quantity using LOT_SIZE / MARKET_LOT_SIZE filters (best-effort).
@@ -382,48 +450,27 @@ class BinanceSpotClient(BaseRestClient):
         except Exception:
             fdict = {}
 
-        key = "MARKET_LOT_SIZE" if for_market else "LOT_SIZE"
-        filt = fdict.get(key) or fdict.get("LOT_SIZE") or {}
+        filt = self._pick_lot_filter(fdict, for_market=for_market)
 
         step = self._to_dec((filt or {}).get("stepSize") or "0")
         min_qty = self._to_dec((filt or {}).get("minQty") or "0")
 
         if step > 0:
             q = self._floor_to_step(q, step)
-        
-        # Enforce quantity precision cap (Binance may reject quantities with too many decimals: -1111).
-        # First try to get precision from metadata
-        qty_precision = None
+
+        step_precision = self._decimal_places_from_step(step)
+        qty_precision = step_precision
         try:
             meta = fdict.get("_meta") or {}
-            if isinstance(meta, dict):
-                qty_precision = meta.get("quantityPrecision")
+            if isinstance(meta, dict) and meta.get("quantityPrecision") is not None:
+                meta_prec = int(meta.get("quantityPrecision"))
+                if step_precision is None:
+                    qty_precision = meta_prec
+                else:
+                    qty_precision = min(meta_prec, step_precision)
         except Exception:
             pass
-        
-        # If precision not available, infer from stepSize
-        if qty_precision is None and step > 0:
-            try:
-                # stepSize like "0.001" means 3 decimal places
-                # Use normalize() to remove trailing zeros, then count decimal places
-                step_normalized = step.normalize()
-                step_str = str(step_normalized)
-                if '.' in step_str:
-                    # Count decimal places after removing trailing zeros
-                    decimal_part = step_str.split('.')[1]
-                    qty_precision = len(decimal_part)
-                    # Ensure precision is at least 0 and at most 18
-                    if qty_precision < 0:
-                        qty_precision = 0
-                    if qty_precision > 18:
-                        qty_precision = 18
-                else:
-                    # If stepSize is 1 or larger, precision is 0
-                    qty_precision = 0
-            except Exception:
-                pass
-        
-        # Apply precision limit
+
         if qty_precision is not None:
             q = self._floor_to_precision(q, qty_precision)
         
@@ -450,10 +497,14 @@ class BinanceSpotClient(BaseRestClient):
             raise LiveTradingError("Invalid quantity/price")
         q_dec, qty_precision = self._normalize_quantity(symbol=symbol, quantity=q_req, for_market=False)
         if float(q_dec or 0) <= 0:
-            raise LiveTradingError(f"Invalid quantity (below step/minQty): requested={q_req}")
+            raise LiveTradingError(
+                f"Invalid quantity (below step/minQty): requested={format_decimal(q_req)}"
+            )
         px_dec = self._normalize_price(symbol=symbol, price=px)
         if float(px_dec or 0) <= 0:
-            raise LiveTradingError(f"Invalid price (bad tick/minPrice): requested={px}")
+            raise LiveTradingError(
+                f"Invalid price (bad tick/minPrice): requested={format_decimal(px)}"
+            )
 
         params: Dict[str, Any] = {
             "symbol": sym,
@@ -487,34 +538,67 @@ class BinanceSpotClient(BaseRestClient):
         *,
         symbol: str,
         side: str,
-        quantity: float,
+        quantity: float = 0.0,
+        quote_order_qty: float = 0.0,
         client_order_id: Optional[str] = None,
     ) -> LiveOrderResult:
+        """
+        Place a spot MARKET order.
+
+        - SELL: requires ``quantity`` (base asset, e.g. 0.001 BTC).
+        - BUY:  prefer ``quote_order_qty`` (USDT notional) so we sidestep
+                LOT_SIZE / MIN_NOTIONAL arithmetic; falls back to ``quantity``
+                when only base is supplied.
+        """
         sym = to_binance_futures_symbol(symbol)
         sd = (side or "").upper()
         if sd not in ("BUY", "SELL"):
             raise LiveTradingError(f"Invalid side: {side}")
-        q_req = float(quantity or 0.0)
-        q_dec, qty_precision = self._normalize_quantity(symbol=symbol, quantity=q_req, for_market=True)
-        if float(q_dec or 0) <= 0:
-            raise LiveTradingError(f"Invalid quantity (below step/minQty): requested={q_req}")
 
         params: Dict[str, Any] = {
             "symbol": sym,
             "side": sd,
             "type": "MARKET",
-            "quantity": self._dec_str(q_dec, strict_precision=qty_precision),
         }
+
+        debug_extra = ""
+        if sd == "BUY" and float(quote_order_qty or 0.0) > 0:
+            q_req = float(quote_order_qty)
+            q_dec, quote_precision = self._normalize_quote_order_qty(
+                symbol=symbol, quote_amount=q_req
+            )
+            if float(q_dec or 0) <= 0:
+                raise LiveTradingError(
+                    "Invalid quoteOrderQty (below MIN_NOTIONAL or precision): "
+                    f"requested={format_decimal(q_req)}"
+                )
+            params["quoteOrderQty"] = self._dec_str(q_dec, strict_precision=quote_precision)
+            debug_extra = (
+                f"mode=quoteOrderQty quote_req={q_req} "
+                f"quote_norm={self._dec_str(q_dec, strict_precision=quote_precision)}"
+            )
+        else:
+            q_req = float(quantity or 0.0)
+            q_dec, qty_precision = self._normalize_quantity(
+                symbol=symbol, quantity=q_req, for_market=True
+            )
+            if float(q_dec or 0) <= 0:
+                raise LiveTradingError(
+                    f"Invalid quantity (below step/minQty): requested={format_decimal(q_req)}"
+                )
+            params["quantity"] = self._dec_str(q_dec, strict_precision=qty_precision)
+            debug_extra = (
+                f"mode=quantity qty_req={q_req} "
+                f"qty_norm={self._dec_str(q_dec, strict_precision=qty_precision)}"
+            )
+
         client_order_id_norm = self._format_client_order_id(client_order_id)
         if client_order_id_norm:
             params["newClientOrderId"] = client_order_id_norm
         try:
             raw = self._signed_request("POST", "/api/v3/order", params=params)
         except LiveTradingError as e:
-            raise LiveTradingError(
-                f"{e} | debug: symbol={sym} side={sd} "
-                f"qty_req={q_req} qty_norm={self._dec_str(q_dec, strict_precision=qty_precision)}"
-            )
+            raise LiveTradingError(f"{e} | debug: symbol={sym} side={sd} {debug_extra}")
         return LiveOrderResult(
             exchange_id="binance",
             exchange_order_id=str(raw.get("orderId") or raw.get("clientOrderId") or ""),
@@ -586,18 +670,23 @@ class BinanceSpotClient(BaseRestClient):
         return 0.0, ""
 
     def get_fee_rate(self, symbol: str, market_type: str = "spot") -> Optional[Dict[str, float]]:
-        sym = symbol.upper().replace("-", "").replace("/", "")
+        sym = to_binance_futures_symbol(symbol)
         try:
-            data = self._signed_request("GET", "/sapi/v1/asset/tradeFee", params={"symbol": sym})
-            if isinstance(data, list) and data and isinstance(data[0], dict):
-                rec = data[0]
-                maker = abs(float(rec.get("makerCommission") or 0))
-                taker = abs(float(rec.get("takerCommission") or 0))
+            data = self._signed_request("GET", "/api/v3/account/commission", params={"symbol": sym})
+            if isinstance(data, dict):
+                rec = data.get("standardCommission") or {}
+                maker = abs(float(rec.get("maker") or 0))
+                taker = abs(float(rec.get("taker") or 0))
                 if maker > 0 or taker > 0:
                     return {"maker": maker, "taker": taker}
         except Exception as e:
-            logger.warning(f"BinanceSpot get_fee_rate({symbol}) failed: {e}")
+            logger.warning(f"BinanceSpot get_fee_rate({symbol}, symbol_param={sym}) failed: {e}")
         return None
+
+    def get_ticker(self, *, symbol: str) -> Dict[str, Any]:
+        """Public spot ticker used to convert BNB/base-asset commission to quote currency."""
+        sym = to_binance_futures_symbol(symbol)
+        return self._public_request("GET", "/api/v3/ticker/price", params={"symbol": sym})
 
     def cancel_order(self, *, symbol: str, order_id: str = "", client_order_id: str = "") -> Dict[str, Any]:
         sym = to_binance_futures_symbol(symbol)
@@ -652,22 +741,22 @@ class BinanceSpotClient(BaseRestClient):
                 pass
 
             if filled > 0 and avg_price > 0:
-                fee, fee_ccy = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
-                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "status": status, "order": last}
+                fee, fee_ccy, fees = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
+                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "fees_by_ccy": fees, "status": status, "order": last}
             if status in ("FILLED", "CANCELED", "EXPIRED", "REJECTED"):
-                fee, fee_ccy = 0.0, ""
+                fee, fee_ccy, fees = 0.0, "", {}
                 if filled > 0:
-                    fee, fee_ccy = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
-                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "status": status, "order": last}
+                    fee, fee_ccy, fees = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
+                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "fees_by_ccy": fees, "status": status, "order": last}
             if time.time() >= end_ts:
-                fee, fee_ccy = 0.0, ""
+                fee, fee_ccy, fees = 0.0, "", {}
                 if filled > 0:
-                    fee, fee_ccy = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
-                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "status": status, "order": last}
+                    fee, fee_ccy, fees = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
+                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "fees_by_ccy": fees, "status": status, "order": last}
             time.sleep(float(poll_interval_sec or 0.5))
 
-    def _fetch_commission_for_order(self, *, symbol: str, order_id: str, filled: float, avg_price: float) -> Tuple[float, str]:
-        """Fetch real commission from myTrades; fall back to tradeFee rate calculation."""
+    def _fetch_commission_for_order(self, *, symbol: str, order_id: str, filled: float, avg_price: float) -> Tuple[float, str, Dict[str, float]]:
+        """Fetch authoritative per-fill commission from spot account trades."""
         oid = str(order_id or "").strip()
         # Method 1: myTrades (up to 3 attempts with 1.5s delay)
         for attempt in range(3):
@@ -675,8 +764,7 @@ class BinanceSpotClient(BaseRestClient):
                 trades = self.get_my_trades(symbol=symbol, order_id=oid, limit=200) if oid else []
                 if not isinstance(trades, list):
                     trades = []
-                total_fee = 0.0
-                fee_ccy = ""
+                fees: Dict[str, float] = {}
                 for t in trades:
                     if not isinstance(t, dict):
                         continue
@@ -686,12 +774,13 @@ class BinanceSpotClient(BaseRestClient):
                         c = 0.0
                     ccy = str(t.get("commissionAsset") or "").strip()
                     if c != 0.0:
-                        total_fee += abs(c)
-                        if not fee_ccy and ccy:
-                            fee_ccy = ccy
-                if total_fee > 0:
-                    logger.debug("BinanceSpot fee via myTrades: %.8f %s (order=%s)", total_fee, fee_ccy, oid)
-                    return total_fee, fee_ccy
+                        key = ccy.upper() if ccy else "UNKNOWN"
+                        fees[key] = fees.get(key, 0.0) + abs(c)
+                if fees:
+                    fee_ccy = next(iter(fees)) if len(fees) == 1 else "MIXED"
+                    total_fee = sum(fees.values()) if len(fees) == 1 else 0.0
+                    logger.debug("BinanceSpot fee via myTrades: %s (order=%s)", fees, oid)
+                    return total_fee, fee_ccy, fees
                 if attempt < 2:
                     time.sleep(1.5)
             except Exception as e:
@@ -699,20 +788,13 @@ class BinanceSpotClient(BaseRestClient):
                 if attempt < 2:
                     time.sleep(1.0)
 
-        # Method 2: calculate from tradeFee rate
-        if filled > 0 and avg_price > 0:
-            try:
-                rate_info = self.get_fee_rate(symbol=symbol)
-                if rate_info:
-                    taker_rate = float(rate_info.get("taker") or 0.0)
-                    if taker_rate > 0:
-                        calc_fee = filled * avg_price * taker_rate
-                        logger.info("BinanceSpot fee via tradeFee rate: %.8f USDT (rate=%.6f, order=%s)", calc_fee, taker_rate, oid)
-                        return calc_fee, "USDT"
-            except Exception as e:
-                logger.warning("BinanceSpot tradeFee rate fallback failed: %s", e)
-
-        logger.warning("BinanceSpot could not obtain fee for order=%s symbol=%s", oid, symbol)
-        return 0.0, ""
-
-
+        # /api/v3/account/commission only reports current rates. It cannot
+        # reproduce an executed order's special/tax commission or discount
+        # asset, so historical reconciliation must never persist an estimate.
+        # The reconciliation worker retries myTrades until the fill is visible.
+        logger.warning(
+            "BinanceSpot myTrades has no authoritative fee yet for order=%s symbol=%s",
+            oid,
+            symbol,
+        )
+        return 0.0, "", {}

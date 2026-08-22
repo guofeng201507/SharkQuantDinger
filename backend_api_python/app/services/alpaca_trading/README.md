@@ -127,10 +127,27 @@ All endpoints require `@login_required`:
 | Auth | TWS/Gateway socket (host/port/clientId) | REST API key+secret |
 | Order IDs | Integer | UUID string |
 | Connection | Stateful, persistent socket | Stateless REST |
-| Paper mode | Port 7496/4002 | Different base URL |
+| Paper mode (IBKR TWS/Gateway) | Port 7497/4002 | Different base URL |
 | Symbol format | `AAPL` (stocks), `0700.HK` (HK) | `AAPL` (US), `BRK.B` (US class), `BTC/USD` (crypto) |
 | Extended hours | Configurable per-order | Configurable per-order (limit only) |
 | Crypto | No (separate IBKR Crypto product) | Yes, same client |
+
+## Troubleshooting: WebSocket `400 invalid syntax`
+
+QuantDinger **connection test** and live orders use the **REST Trading API** (`TradingClient.get_account()`), **not** the market-data WebSocket at `wss://stream.data.alpaca.markets/...`.
+
+If you see Alpaca error **code 400 / invalid syntax** from the [streaming docs](https://docs.alpaca.markets/us/docs/streaming-market-data#authentication), that is almost always from a **WebSocket client** (custom script, another app, or a chart feed), not from `/api/alpaca/connect` or `/strategies/test-connection`.
+
+Common causes:
+
+| Issue | Fix |
+|-------|-----|
+| Subscribe before auth | After `connected`, send `{"action":"auth","key":"...","secret":"..."}` within 10s |
+| Wrong JSON shape | Use `action` + channel keys, e.g. `{"action":"subscribe","trades":["AAPL"]}` |
+| Invalid symbol | US stocks: `AAPL` (no `BTC/USDT`). Crypto: `BTC/USD` (Alpaca does **not** use `BTC/USDT`) |
+| Class shares | `BRK/B` → `BRK.B` for REST; do not treat as a crypto pair |
+
+This module normalizes symbols (`symbols.py`): `BTC/USDT` → `BTC/USD` for crypto, `BRK/B` → `BRK.B` for equities.
 
 ## Limitations / TODO
 

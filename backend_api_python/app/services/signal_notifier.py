@@ -18,258 +18,159 @@ notification_config = {
 from __future__ import annotations
 
 import base64
-import html
-import hmac
 import hashlib
+import hmac
+import html
 import json
 import os
 import smtplib
 import time
-import urllib.parse
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Any, Dict, List, Optional, Tuple
-
+from urllib.parse import quote_plus, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 import requests
 
 from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
+from app.utils.notification_display import with_display
 
 logger = get_logger(__name__)
 
 
-# ============================================================
-# Webhook dialect detection & payload adaptation
-# ============================================================
-#
-# QuantDinger's webhook channel was originally generic: it POSTed our
-# own JSON schema (event/strategy/instrument/signal/order/...) to whatever
-# URL the user supplied. That works fine for self-hosted automation
-# endpoints, but most users actually point this at a group-chat bot —
-# Feishu/Lark, DingTalk, WeCom, Slack. Those bots reject any envelope
-# that isn't theirs and (worse for Feishu/DingTalk/WeCom) typically
-# return HTTP 200 with an error body, making the failure silent: the
-# user clicks "Test", sees a success toast, and nothing arrives in the
-# group.
-#
-# The helpers below auto-detect the dialect from the URL host and
-# translate our payload into the vendor's required schema. For
-# generic/self-hosted URLs we keep emitting the original schema so
-# existing integrations keep working untouched.
+def _shorten(value: Any, max_len: int = 200) -> str:
+    text = str(value or "")
+    return text if len(text) <= max_len else text[: max(0, max_len - 3)] + "..."
 
-_WEBHOOK_DIALECT_PATTERNS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
-    ('feishu', (
-        'open.feishu.cn/open-apis/bot/v2/hook/',
-        'open.larksuite.com/open-apis/bot/v2/hook/',
-        'open.larkoffice.com/open-apis/bot/v2/hook/',
-        'www.larksuite.com/open-apis/bot/v2/hook/',
-    )),
-    ('dingtalk', ('oapi.dingtalk.com/robot/send',)),
-    ('wecom', ('qyapi.weixin.qq.com/cgi-bin/webhook/send',)),
-    ('slack', ('hooks.slack.com/services/',)),
-)
+
+def _fmt_float(value: Any, max_decimals: int = 8) -> str:
+    try:
+        num = float(value or 0)
+    except Exception:
+        return "0"
+    if not num:
+        return "0"
+    text = f"{num:.{max(0, int(max_decimals))}f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _signal_payload_text(payload: Dict[str, Any]) -> str:
+    strategy = (payload or {}).get("strategy") or {}
+    instrument = (payload or {}).get("instrument") or {}
+    sig = (payload or {}).get("signal") or {}
+    order = (payload or {}).get("order") or {}
+    trace = (payload or {}).get("trace") or {}
+
+    symbol = str(instrument.get("symbol") or "-")
+    action = str(sig.get("action") or "signal").upper()
+    side = str(sig.get("side") or "").upper()
+    signal_type = str(sig.get("type") or "-")
+    price = _fmt_float(order.get("ref_price") or 0.0, max_decimals=10)
+    stake = _fmt_float(order.get("stake_amount") or 0.0, max_decimals=12)
+    strategy_text = f"{strategy.get('name') or '-'} (#{int(strategy.get('id') or 0)})"
+
+    lines = [
+        f"QuantDinger Signal - {symbol} - {' '.join([action, side]).strip()}",
+        f"Strategy: {strategy_text}",
+        f"Symbol: {symbol}",
+        f"Signal: {signal_type}",
+        f"Reference price: {price}",
+        f"Stake: {stake}",
+    ]
+    if trace.get("pending_order_id"):
+        lines.append(f"Pending order: {int(trace.get('pending_order_id'))}")
+    if trace.get("mode"):
+        lines.append(f"Mode: {trace.get('mode')}")
+    if payload.get("timestamp_display") or payload.get("timestamp_iso"):
+        label = str(payload.get("time_label") or "Time")
+        lines.append(f"{label}: {payload.get('timestamp_display') or payload.get('timestamp_iso')}")
+    return "\n".join(lines)
+
+
+def _profile_test_text(payload: Dict[str, Any]) -> str:
+    title = str((payload or {}).get("title") or "QuantDinger notification test")
+    message = str((payload or {}).get("message") or "This channel is configured correctly.")
+    return f"{title}\n{message}"
+
+
+def _payload_text(payload: Dict[str, Any]) -> str:
+    event = str((payload or {}).get("event") or "")
+    if event == "qd.signal":
+        return _signal_payload_text(payload)
+    if event == "qd.profile_test":
+        return _profile_test_text(payload)
+
+    display = (payload or {}).get("display") or {}
+    if isinstance(display, dict):
+        for key in ("plain", "message", "title"):
+            value = display.get(key)
+            if value:
+                return str(value)
+    for key in ("plain", "message", "title", "event"):
+        value = (payload or {}).get(key)
+        if value:
+            return str(value)
+    return json.dumps(payload or {}, ensure_ascii=False, default=str)
 
 
 def _detect_webhook_dialect(url: str) -> str:
-    """
-    Sniff the URL and return the vendor dialect name, or 'generic' for
-    self-hosted endpoints. Keep the prefix check substring-based so
-    minor URL variations (regional subdomains, query suffixes) still
-    match.
-    """
-    u = (url or '').lower()
-    for dialect, prefixes in _WEBHOOK_DIALECT_PATTERNS:
-        if any(p in u for p in prefixes):
-            return dialect
-    return 'generic'
-
-
-def _shorten(s: str, limit: int = 4000) -> str:
-    s = str(s or '')
-    return s if len(s) <= limit else (s[:limit] + '…')
-
-
-def _build_webhook_text(payload: Dict[str, Any]) -> Tuple[str, str]:
-    """
-    Distill our internal payload into (title, body) plain text suitable
-    for forwarding to a group-chat bot. We deliberately do NOT trust
-    the bot to render arbitrary HTML — Feishu accepts markdown only in
-    "post"/"interactive" envelopes, not in "text". Markdown bullets are
-    kept lightweight (newline-separated key/value pairs) so they look
-    OK in every vendor that supports text or markdown.
-    """
-    p = payload or {}
-
-    explicit_title = str(p.get('title') or '').strip()
-    explicit_msg = str(p.get('message') or '').strip()
-    if explicit_title or explicit_msg:
-        return (explicit_title or 'QuantDinger'), (explicit_msg or '')
-
-    strategy = p.get('strategy') or {}
-    instrument = p.get('instrument') or {}
-    sig = p.get('signal') or {}
-    order = p.get('order') or {}
-
-    sname = str(strategy.get('name') or '').strip()
-    sym = str(instrument.get('symbol') or '').strip()
-    stype = str(sig.get('type') or sig.get('action') or '').strip()
-    side = str(sig.get('side') or '').strip()
-
-    title_bits: List[str] = []
-    if sname:
-        title_bits.append(sname)
-    if sym:
-        title_bits.append(sym)
-    if stype:
-        title_bits.append(stype.upper())
-    title = ' · '.join(title_bits) if title_bits else 'QuantDinger 信号'
-
-    body_lines: List[str] = []
-    if sname:
-        body_lines.append(f"策略: {sname}")
-    if sym:
-        body_lines.append(f"标的: {sym}")
-    if stype:
-        body_lines.append(f"信号: {stype}")
-    if side:
-        body_lines.append(f"方向: {side}")
-    try:
-        ref_price = float(order.get('ref_price') or 0)
-        if ref_price > 0:
-            body_lines.append(f"价格: {_fmt_float(ref_price)}")
-    except Exception:
-        pass
-    try:
-        stake = float(order.get('stake_amount') or 0)
-        if stake > 0:
-            body_lines.append(f"金额: {_fmt_float(stake)}")
-    except Exception:
-        pass
-    ts_iso = str(p.get('timestamp_iso') or '').strip()
-    if ts_iso:
-        body_lines.append(f"时间: {ts_iso}")
-
-    if not body_lines:
-        body_lines.append(_shorten(json.dumps(p, ensure_ascii=False), 800))
-
-    return title, "\n".join(body_lines)
+    host = (urlsplit(str(url or "")).netloc or "").lower()
+    raw = str(url or "").lower()
+    if "discord.com/api/webhooks" in raw:
+        return "discord"
+    if "open.feishu.cn" in host or "larksuite.com" in host:
+        return "feishu"
+    if "oapi.dingtalk.com" in host:
+        return "dingtalk"
+    if "qyapi.weixin.qq.com" in host or "work.weixin.qq.com" in host:
+        return "wecom"
+    if "hooks.slack.com" in host:
+        return "slack"
+    return "generic"
 
 
 def _adapt_payload_for_dialect(dialect: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Translate the internal payload to the vendor's required JSON.
-
-    Each branch is documented inline because the field names differ
-    across platforms in ways that are easy to mis-remember:
-
-    - 飞书/Lark text 机器人: ``{msg_type: 'text', content: {text}}``
-    - 钉钉机器人 markdown:    ``{msgtype: 'markdown', markdown: {title, text}}``
-    - 企微/WeCom markdown:    ``{msgtype: 'markdown', markdown: {content}}``
-    - Slack incoming webhook: ``{text}``
-    """
-    title, body = _build_webhook_text(payload)
-
-    if dialect == 'feishu':
-        # Feishu/Lark text content cap is around 30k chars but the chat
-        # UI gets unreadable far before that; clamp at ~4k.
-        return {
-            "msg_type": "text",
-            "content": {"text": f"{title}\n{_shorten(body)}"},
-        }
-    if dialect == 'dingtalk':
-        # DingTalk markdown body must be non-empty *and* contain at
-        # least one of the keywords the bot was created with — but
-        # that's a user-config issue we can't fix here. The "###" prefix
-        # at least makes title visible.
-        return {
-            "msgtype": "markdown",
-            "markdown": {"title": _shorten(title, 64), "text": f"### {title}\n\n{_shorten(body)}"},
-        }
-    if dialect == 'wecom':
-        return {
-            "msgtype": "markdown",
-            "markdown": {"content": f"### {title}\n\n{_shorten(body, 4000)}"},
-        }
-    if dialect == 'slack':
-        return {"text": f"*{title}*\n{_shorten(body)}"}
-    return payload
+    text = _payload_text(payload)
+    if dialect == "feishu":
+        return {"msg_type": "text", "content": {"text": text}}
+    if dialect in ("dingtalk", "wecom"):
+        return {"msgtype": "text", "text": {"content": text}}
+    if dialect == "slack":
+        return {"text": text}
+    return payload or {}
 
 
-def _feishu_sign(secret: str, timestamp_str: str) -> str:
-    """
-    Feishu custom-bot signing algorithm.
-
-    Algorithm (per docs):
-      key = timestamp + "\\n" + secret  (utf-8)
-      digest = HMAC-SHA256(key, b"")
-      sign = base64(digest)
-
-    The timestamp and sign are then placed *inside* the JSON body, not
-    in headers. See:
-    https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot
-    """
-    key = f"{timestamp_str}\n{secret}".encode('utf-8')
-    digest = hmac.new(key, b"", hashlib.sha256).digest()
-    return base64.b64encode(digest).decode('utf-8')
+def _feishu_sign(secret: str, timestamp: str) -> str:
+    string_to_sign = f"{timestamp}\n{secret}".encode("utf-8")
+    digest = hmac.new(string_to_sign, b"", hashlib.sha256).digest()
+    return base64.b64encode(digest).decode("utf-8")
 
 
 def _dingtalk_signed_url(url: str, secret: str) -> str:
-    """
-    DingTalk custom-bot signing.
-
-    Algorithm:
-      string_to_sign = timestamp_ms + "\\n" + secret
-      digest = HMAC-SHA256(secret, string_to_sign)
-      sign = url_encode(base64(digest))
-    Then append &timestamp=...&sign=... to the URL.
-    """
-    ts_ms = str(int(time.time() * 1000))
-    string_to_sign = f"{ts_ms}\n{secret}"
-    digest = hmac.new(secret.encode('utf-8'), string_to_sign.encode('utf-8'), hashlib.sha256).digest()
-    sign = urllib.parse.quote_plus(base64.b64encode(digest).decode('utf-8'))
-    sep = '&' if ('?' in url) else '?'
-    return f"{url}{sep}timestamp={ts_ms}&sign={sign}"
+    ts = str(int(time.time() * 1000))
+    string_to_sign = f"{ts}\n{secret}".encode("utf-8")
+    digest = hmac.new(secret.encode("utf-8"), string_to_sign, hashlib.sha256).digest()
+    sign = quote_plus(base64.b64encode(digest).decode("utf-8"))
+    parts = urlsplit(str(url))
+    sep = "&" if parts.query else ""
+    query = f"{parts.query}{sep}timestamp={ts}&sign={sign}"
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
 
 
 def _check_vendor_response(dialect: str, status_code: int, text: str) -> Tuple[bool, str]:
-    """
-    Group-chat bots typically return HTTP 200 even on logical failures
-    (invalid signature, wrong msg_type, missing keyword, etc.) and put
-    the real result inside the JSON body. This checker normalises
-    that so a "silent failure" actually surfaces as an error to the
-    caller.
-
-    Vendor success codes:
-      - 飞书:   {"code": 0, "msg": "ok"} or {"StatusCode": 0}
-      - 钉钉:   {"errcode": 0, "errmsg": "ok"}
-      - 企微:   {"errcode": 0, "errmsg": "ok"}
-      - Slack:  plain text "ok" with HTTP 200
-    """
-    if status_code < 200 or status_code >= 300:
+    if not (200 <= int(status_code or 0) < 300):
         return False, f"http_{status_code}:{_shorten(text, 300)}"
-
-    body = (text or '').strip()
-    if dialect == 'slack':
-        return (body.lower() == 'ok' or body.startswith('{')), (
-            '' if (body.lower() == 'ok' or body.startswith('{')) else f"slack_unexpected:{_shorten(body, 300)}"
-        )
-
-    if dialect in ('feishu', 'dingtalk', 'wecom'):
-        if not body or not body.startswith('{'):
-            # Non-JSON 200 — vendor SDK still sometimes does this.
-            return True, ""
-        try:
-            obj = json.loads(body)
-        except Exception:
-            return True, ""
-        code = obj.get('code', obj.get('errcode', obj.get('StatusCode')))
-        if code in (0, '0', None):
-            return True, ""
-        msg = obj.get('msg') or obj.get('errmsg') or ''
-        return False, f"{dialect}_error:code={code}:{_shorten(msg, 200)}"
-
+    try:
+        data = json.loads(text or "{}")
+    except Exception:
+        data = {}
+    if dialect in ("feishu", "dingtalk", "wecom") and isinstance(data, dict):
+        code = data.get("StatusCode", data.get("code", data.get("errcode", 0)))
+        if str(code) not in ("", "0", "200"):
+            msg = data.get("msg") or data.get("errmsg") or data.get("StatusMessage") or text
+            return False, f"vendor_{code}:{_shorten(msg, 300)}"
     return True, ""
 
 
@@ -352,14 +253,6 @@ def _utc_ts_to_user_display(now: int, user_timezone: str) -> Tuple[str, str, str
         return iso, iso, "Time (UTC)"
 
 
-def _fmt_float(value: Any, *, max_decimals: int = 10) -> str:
-    try:
-        v = float(value or 0.0)
-    except Exception:
-        v = 0.0
-    s = f"{v:.{int(max_decimals)}f}"
-    s = s.rstrip("0").rstrip(".")
-    return s or "0"
 
 
 class SignalNotifier:
@@ -386,7 +279,6 @@ class SignalNotifier:
         except Exception:
             self.timeout_sec = 6.0
 
-        # 公共 SMTP 配置（管理员在系统设置中配置）
         self.smtp_host = (os.getenv("SMTP_HOST") or "").strip()
         try:
             self.smtp_port = int(os.getenv("SMTP_PORT") or "587")
@@ -439,6 +331,30 @@ class SignalNotifier:
         rendered = self._render_messages(payload)
         title = rendered.get("title") or ""
         message_plain = rendered.get("plain") or ""
+
+        strategy = (payload or {}).get("strategy") or {}
+        instrument = (payload or {}).get("instrument") or {}
+        sig = (payload or {}).get("signal") or {}
+        order = (payload or {}).get("order") or {}
+        trace = (payload or {}).get("trace") or {}
+        payload = with_display(
+            payload,
+            "signal.trade",
+            {
+                "strategyName": str(strategy.get("name") or ""),
+                "strategyId": int(strategy.get("id") or 0),
+                "symbol": str(instrument.get("symbol") or ""),
+                "signalType": str(sig.get("type") or ""),
+                "action": str(sig.get("action") or "").upper(),
+                "side": str(sig.get("side") or "").upper(),
+                "price": _fmt_float(order.get("ref_price") or 0.0, max_decimals=10),
+                "stake": _fmt_float(order.get("stake_amount") or 0.0, max_decimals=12),
+                "pendingOrderId": int(trace.get("pending_order_id") or 0) or "",
+                "mode": str(trace.get("mode") or ""),
+                "timestampDisplay": str(payload.get("timestamp_display") or ""),
+                "timeLabel": str(payload.get("time_label") or "Time"),
+            },
+        )
 
         results: Dict[str, Dict[str, Any]] = {}
         for ch in channels:
@@ -609,26 +525,30 @@ class SignalNotifier:
 
         # Telegram (HTML) message. Escape all dynamic values.
         t_strategy = f"{strategy.get('name') or ''} (#{int(strategy.get('id') or 0)})"
+        action_label = " ".join([action, side]).strip() or "SIGNAL"
         telegram_lines = [
-            "<b>QuantDinger Signal</b>",
+            f"<b>QuantDinger Signal</b> | <code>{html.escape(symbol or '-')}</code>",
+            f"<b>{html.escape(action_label)}</b>",
             "",
             f"<b>Strategy</b>: <code>{html.escape(str(t_strategy))}</code>",
-            f"<b>Symbol</b>: <code>{html.escape(symbol)}</code>",
             f"<b>Signal</b>: <code>{html.escape(stype)}</code>",
-            f"<b>Price</b>: <code>{html.escape(price_s)}</code>",
+            f"<b>Reference price</b>: <code>{html.escape(price_s)}</code>",
             f"<b>Stake</b>: <code>{html.escape(stake_s)}</code>",
         ]
         if pending_id:
-            telegram_lines.append(f"<b>PendingOrder</b>: <code>{pending_id}</code>")
+            telegram_lines.append(f"<b>Pending order</b>: <code>{pending_id}</code>")
         if mode:
             telegram_lines.append(f"<b>Mode</b>: <code>{html.escape(mode)}</code>")
         if ts_disp:
             telegram_lines.append(f"<b>{html.escape(ts_lbl)}</b>: <code>{html.escape(ts_disp)}</code>")
+        telegram_lines.append("")
+        telegram_lines.append("<i>Generated by QuantDinger signal engine.</i>")
         telegram_html = "\n".join([x for x in telegram_lines if x is not None])
 
         # Email (HTML) message. Keep inline CSS for maximum compatibility.
         email_html = self._build_email_html(
             title_text="QuantDinger Signal",
+            action_text=action_label,
             strategy_text=t_strategy,
             symbol=symbol,
             signal_type=stype,
@@ -651,6 +571,7 @@ class SignalNotifier:
         self,
         *,
         title_text: str,
+        action_text: str,
         strategy_text: str,
         symbol: str,
         signal_type: str,
@@ -682,10 +603,10 @@ class SignalNotifier:
             [
                 (
                     "<tr>"
-                    "<td style='padding:10px 12px;border-top:1px solid #eaecef;color:#57606a;width:160px;'>"
+                    "<td style='padding:12px 14px;border-top:1px solid #202633;color:#9ca3af;width:170px;font-size:13px;'>"
                     f"{esc(k)}"
                     "</td>"
-                    "<td style='padding:10px 12px;border-top:1px solid #eaecef;color:#24292f;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace;'>"
+                    "<td style='padding:12px 14px;border-top:1px solid #202633;color:#f8fafc;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace;font-size:13px;text-align:right;'>"
                     f"{esc(v)}"
                     "</td>"
                     "</tr>"
@@ -694,21 +615,30 @@ class SignalNotifier:
             ]
         )
 
+        accent = "#22c55e"
+        action_lower = str(action_text or "").lower()
+        if any(x in action_lower for x in ("short", "sell", "close", "reduce")):
+            accent = "#ef4444"
+        elif "signal" in action_lower:
+            accent = "#3b82f6"
+
         return f"""\
 <!doctype html>
 <html>
-  <body style="margin:0;padding:0;background:#f6f8fa;">
-    <div style="max-width:640px;margin:0 auto;padding:24px;">
-      <div style="background:#111827;color:#ffffff;padding:16px 18px;border-radius:12px 12px 0 0;">
-        <div style="font-size:16px;letter-spacing:0.2px;font-weight:600;">{esc(title_text)}</div>
-        <div style="margin-top:6px;font-size:12px;color:#d1d5db;">{esc(timestamp_display) if timestamp_display else ""}</div>
-      </div>
-      <div style="background:#ffffff;border:1px solid #eaecef;border-top:0;border-radius:0 0 12px 12px;overflow:hidden;">
-        <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+  <body style="margin:0;padding:0;background:#090b10;">
+    <div style="max-width:680px;margin:0 auto;padding:28px 18px;font-family:Inter,Arial,sans-serif;">
+      <div style="background:#141821;border:1px solid #252b38;border-radius:8px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.35);">
+        <div style="padding:22px 24px;background:linear-gradient(135deg, rgba(239,68,68,.18), rgba(59,130,246,.10));border-bottom:1px solid #252b38;">
+          <div style="font-size:12px;color:#9ca3af;font-weight:700;text-transform:uppercase;">{esc(title_text)}</div>
+          <div style="margin-top:8px;font-size:24px;line-height:1.2;font-weight:800;color:#ffffff;">{esc(symbol or "-")}</div>
+          <div style="margin-top:14px;display:inline-block;padding:7px 11px;border-radius:6px;border:1px solid {accent};background:rgba(255,255,255,.04);color:{accent};font-size:13px;font-weight:800;">{esc(action_text or "SIGNAL")}</div>
+          <div style="margin-top:12px;font-size:12px;color:#9ca3af;">{esc(timestamp_display) if timestamp_display else ""}</div>
+        </div>
+        <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;background:#11151d;">
           {tr_html}
         </table>
-        <div style="padding:14px 16px;color:#6e7781;font-size:12px;border-top:1px solid #eaecef;">
-          Generated by QuantDinger
+        <div style="padding:14px 18px;color:#9ca3af;font-size:12px;border-top:1px solid #252b38;background:#0f131a;">
+          Generated by QuantDinger signal engine. Review execution mode and exchange account before acting.
         </div>
       </div>
     </div>
@@ -729,7 +659,6 @@ class SignalNotifier:
         user_id: int = None,
     ) -> Tuple[bool, str]:
         try:
-            now = int(time.time())
             # Get user_id from strategy if not provided
             if user_id is None:
                 if strategy_id is not None:
@@ -929,6 +858,17 @@ class SignalNotifier:
         if not (str(url).startswith("http://") or str(url).startswith("https://")):
             return False, "invalid_discord_webhook_url"
 
+        if str((payload or {}).get("event") or "") == "qd.profile_test":
+            embed = {
+                "title": str((payload or {}).get("title") or "QuantDinger notification test"),
+                "description": str((payload or {}).get("message") or fallback_text or "Channel configured correctly.")[:3800],
+                "color": 0x22C55E,
+                "footer": {"text": "QuantDinger notification channel check"},
+            }
+            if (payload or {}).get("timestamp_iso"):
+                embed["timestamp"] = str((payload or {}).get("timestamp_iso") or "")
+            return self._post_discord_embed(url=url, embed=embed, fallback_text=fallback_text)
+
         strategy = (payload or {}).get("strategy") or {}
         instrument = (payload or {}).get("instrument") or {}
         sig = (payload or {}).get("signal") or {}
@@ -942,21 +882,33 @@ class SignalNotifier:
         if action in ("close", "reduce"):
             color = 0xE74C3C
 
+        action_label = " ".join([
+            str(sig.get("action") or "").upper(),
+            str(sig.get("side") or "").upper(),
+        ]).strip() or "SIGNAL"
+        price_text = _fmt_float(order.get("ref_price") or 0.0, max_decimals=10)
+        stake_text = _fmt_float(order.get("stake_amount") or 0.0, max_decimals=12)
+
         embed: Dict[str, Any] = {
-            "title": "QuantDinger Signal",
+            "title": f"QuantDinger Signal | {str(instrument.get('symbol') or '-')}",
+            "description": f"**{action_label}**",
             "color": int(color),
             "fields": [
                 {"name": "Strategy", "value": f"{strategy.get('name') or ''} (#{int(strategy.get('id') or 0)})", "inline": True},
                 {"name": "Symbol", "value": str(instrument.get("symbol") or ""), "inline": True},
                 {"name": "Signal", "value": str(sig.get("type") or ""), "inline": False},
-                {"name": "Price", "value": str(float(order.get('ref_price') or 0.0)), "inline": True},
-                {"name": "Stake", "value": str(float(order.get('stake_amount') or 0.0)), "inline": True},
+                {"name": "Reference price", "value": price_text, "inline": True},
+                {"name": "Stake", "value": stake_text, "inline": True},
             ],
+            "footer": {"text": "Generated by QuantDinger signal engine"},
         }
         if payload.get("timestamp_iso"):
             embed["timestamp"] = str(payload.get("timestamp_iso") or "")
         if trace.get("pending_order_id"):
-            embed["footer"] = {"text": f"pending_order_id={int(trace.get('pending_order_id'))}"}
+            embed["footer"] = {"text": f"Generated by QuantDinger signal engine | pending_order_id={int(trace.get('pending_order_id'))}"}
+        return self._post_discord_embed(url=url, embed=embed, fallback_text=fallback_text)
+
+    def _post_discord_embed(self, *, url: str, embed: Dict[str, Any], fallback_text: str) -> Tuple[bool, str]:
         headers = {
             "Content-Type": "application/json",
             "User-Agent": "QuantDinger/1.0 (+https://www.quantdinger.com)",
@@ -1007,7 +959,6 @@ class SignalNotifier:
         token_override: str = "",
         parse_mode: str = "",
     ) -> Tuple[bool, str]:
-        # 用户必须在个人中心配置自己的 telegram_bot_token
         token = (token_override or "").strip()
         if not token:
             return False, "missing_telegram_bot_token (请在个人中心配置 Telegram Bot Token)"
@@ -1120,21 +1071,52 @@ class SignalNotifier:
         )
         html_body = f"<p>{html.escape(plain)}</p>"
         telegram_html = f"<b>{html.escape(title)}</b>\n\n{html.escape(plain)}"
+        title = "QuantDinger \u901a\u77e5\u6d4b\u8bd5" if zh else "QuantDinger notification test"
+        plain = (
+            "\u8fd9\u662f\u4e00\u6761\u6765\u81ea QuantDinger \u4e2a\u4eba\u4e2d\u5fc3\u300c\u901a\u77e5\u8bbe\u7f6e\u300d\u7684\u6d4b\u8bd5\u6d88\u606f\u3002\u82e5\u60a8\u6536\u5230\u672c\u6761\u6d88\u606f\uff0c\u8bf4\u660e\u8be5\u6e20\u9053\u914d\u7f6e\u6b63\u786e\u3002"
+            if zh
+            else "This is a test message from QuantDinger profile notification settings. "
+            "If you received this, the channel is configured correctly."
+        )
+        html_body = f"""\
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#090b10;">
+    <div style="max-width:640px;margin:0 auto;padding:28px 18px;font-family:Inter,Arial,sans-serif;">
+      <div style="background:#141821;border:1px solid #252b38;border-radius:8px;overflow:hidden;">
+        <div style="padding:22px 24px;background:linear-gradient(135deg, rgba(59,130,246,.20), rgba(34,197,94,.10));border-bottom:1px solid #252b38;">
+          <div style="font-size:12px;color:#9ca3af;font-weight:700;text-transform:uppercase;">QuantDinger Notification</div>
+          <div style="margin-top:8px;font-size:22px;line-height:1.25;font-weight:800;color:#ffffff;">{html.escape(title)}</div>
+          <div style="margin-top:14px;display:inline-block;padding:7px 11px;border-radius:6px;border:1px solid #22c55e;color:#22c55e;font-size:13px;font-weight:800;">OK</div>
+        </div>
+        <div style="padding:18px 24px;color:#d1d5db;font-size:14px;line-height:1.7;background:#11151d;">{html.escape(plain)}</div>
+      </div>
+    </div>
+  </body>
+</html>
+"""
+        telegram_html = f"<b>{html.escape(title)}</b>\n\n{html.escape(plain)}\n\n<i>QuantDinger notification channel check passed.</i>"
 
         now = int(time.time())
         iso = datetime.now(timezone.utc).isoformat()
-        test_payload: Dict[str, Any] = {
-            "event": "qd.profile_test",
-            "version": 1,
-            "timestamp": now,
-            "timestamp_iso": iso,
-            "strategy": {"id": 0, "name": "Profile Test"},
-            "instrument": {"symbol": "TEST"},
-            "signal": {"type": "profile_test", "action": "test", "side": ""},
-            "order": {"ref_price": 0.0, "stake_amount": 0.0},
-            "trace": {},
-            "extra": {"kind": "profile_test"},
-        }
+        test_payload: Dict[str, Any] = with_display(
+            {
+                "event": "qd.profile_test",
+                "version": 1,
+                "title": title,
+                "message": plain,
+                "timestamp": now,
+                "timestamp_iso": iso,
+                "strategy": {"id": 0, "name": "Profile Test"},
+                "instrument": {"symbol": "TEST"},
+                "signal": {"type": "profile_test", "action": "test", "side": ""},
+                "order": {"ref_price": 0.0, "stake_amount": 0.0},
+                "trace": {},
+                "extra": {"kind": "profile_test"},
+            },
+            "profile.test",
+            {},
+        )
 
         results: Dict[str, Dict[str, Any]] = {}
         ch_list = _as_list(channels)
@@ -1154,7 +1136,7 @@ class SignalNotifier:
                         signal_type="profile_test",
                         channels=ch_list,
                         title=title,
-                        message=html_body,
+                        message=plain,
                         payload=test_payload,
                         user_id=int(user_id),
                     )

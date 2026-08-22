@@ -5,8 +5,6 @@ expose a curated subset of fields to keep the agent contract stable.
 """
 from __future__ import annotations
 
-from typing import Any
-
 from app.services.strategy import StrategyService
 from app.utils.agent_auth import (
     SCOPE_R, SCOPE_W, agent_required, current_user_id,
@@ -16,6 +14,7 @@ from flask import request
 
 from . import agent_v1_bp
 from ._helpers import clip_int, envelope, error, get_json_or_400
+from ._security import redact_strategy_row
 
 logger = get_logger(__name__)
 _strategy_service = StrategyService()
@@ -24,7 +23,7 @@ _strategy_service = StrategyService()
 _PUBLIC_FIELDS = (
     "id", "strategy_name", "strategy_type", "market_category",
     "symbol", "timeframe", "status", "initial_capital", "leverage",
-    "market_type", "strategy_mode", "execution_mode",
+    "market_type", "execution_mode",
     "created_at", "updated_at",
 )
 
@@ -60,7 +59,7 @@ def get_strategy(strategy_id: int):
         return error(500, "get_strategy failed", details=str(exc), http=500)
     if not row:
         return error(404, "Strategy not found", http=404)
-    return envelope(row)
+    return envelope(redact_strategy_row(row))
 
 
 @agent_v1_bp.route("/strategies", methods=["POST"])
@@ -75,15 +74,13 @@ def create_strategy():
     if err:
         return err
 
-    name = (body.get("strategy_name") or "").strip()
+    name = str(body.get("name") or "").strip()
     if not name:
-        return error(400, "strategy_name is required")
-
-    payload: dict[str, Any] = dict(body)
-    payload["user_id"] = current_user_id()
-    payload.setdefault("status", "stopped")  # never auto-start from agent path
+        return error(400, "strategyV2.nameRequired")
 
     try:
+        payload = dict(body)
+        payload["user_id"] = current_user_id()
         new_id = _strategy_service.create_strategy(payload)
     except ValueError as ve:
         return error(400, str(ve))
@@ -98,26 +95,15 @@ def create_strategy():
 @agent_v1_bp.route("/strategies/<int:strategy_id>", methods=["PATCH"])
 @agent_required(SCOPE_W)
 def update_strategy(strategy_id: int):
-    """Tenant-scoped patch.  Status changes that flip a strategy to `running`
-    are rejected unless the token also has T scope; agents must explicitly
-    request live execution scope to start strategies.
-    """
+    """Update the canonical deployment configuration for one strategy."""
     body, err = get_json_or_400()
     if err:
         return err
 
-    new_status = (body.get("status") or "").strip().lower()
-    if new_status == "running":
-        from app.utils.agent_auth import current_token, parse_scopes
-        if "T" not in parse_scopes(current_token().get("scopes")):
-            return error(
-                403,
-                "Activating a strategy requires T (trading) scope on this token",
-                http=403,
-            )
-
     try:
         ok = _strategy_service.update_strategy(strategy_id, body, user_id=current_user_id())
+    except ValueError as exc:
+        return error(400, str(exc))
     except Exception as exc:
         logger.error(f"agent_v1/strategies update failed: {exc}", exc_info=True)
         return error(500, "update_strategy failed", details=str(exc), http=500)

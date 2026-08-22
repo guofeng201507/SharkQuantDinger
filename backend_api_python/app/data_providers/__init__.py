@@ -58,6 +58,8 @@ CACHE_TTL = {
     # News & calendar — slow-moving, can be cached aggressively.
     "market_news": 180,
     "economic_calendar": 3600,
+    "economic_calendar_v2": 3600,
+    "economic_calendar_v3": 3600,
     # Macro sentiment (Fear&Greed, VIX, DXY...) — daily-ish cadence so 6h
     # is fine. SWR lets us return the previous payload while we refresh.
     "market_sentiment": 21600,
@@ -313,8 +315,13 @@ def clear_cache():
     else:
         try:
             import redis as _redis
+            from app.config.redis_urls import cache_key
+
             if isinstance(cm._client, _redis.Redis):
-                for key in cm._client.scan_iter("dp:*"):
+                # CacheManager namespaces every key.  Scanning bare ``dp:*``
+                # leaves Redis entries behind even though the in-memory
+                # implementation clears correctly.
+                for key in cm._client.scan_iter(cache_key("dp:*")):
                     cm._client.delete(key)
         except Exception:
             pass

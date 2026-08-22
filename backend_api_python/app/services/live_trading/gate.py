@@ -17,12 +17,13 @@ import hashlib
 import hmac
 import logging
 import time
-from decimal import Decimal, ROUND_DOWN, ROUND_UP
+from decimal import Decimal, ROUND_UP
 from typing import Any, Dict, Optional, Tuple, Union
 from urllib.parse import urlencode
 
 from app.services.live_trading.base import BaseRestClient, LiveOrderResult, LiveTradingError
 from app.services.live_trading.symbols import to_gate_currency_pair
+from app.utils.numeric_precision import floor_decimal_to_step
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +54,13 @@ def _gate_ticker_response_to_normalized(raw: Any) -> Dict[str, Any]:
 
 
 class _GateBase(BaseRestClient):
+    _CHANNEL_ID = "dinger"
+
     def __init__(self, *, api_key: str, secret_key: str, base_url: str = "https://api.gateio.ws", timeout_sec: float = 15.0, channel_id: str = ""):
         super().__init__(base_url=base_url, timeout_sec=timeout_sec)
         self.api_key = (api_key or "").strip()
         self.secret_key = (secret_key or "").strip()
-        self.channel_id = (channel_id or "").strip()
+        self.channel_id = self._CHANNEL_ID
         if not self.api_key or not self.secret_key:
             raise LiveTradingError("Missing Gate api_key/secret_key")
 
@@ -102,14 +105,23 @@ class _GateBase(BaseRestClient):
         ts = str(int(time.time()))
         body_str = self._json_dumps(json_body) if json_body is not None else ""
         qs = ""
+        request_params = None
         if params:
             norm = {str(k): "" if v is None else str(v) for k, v in dict(params).items()}
-            qs = urlencode(sorted(norm.items()), doseq=True)
+            ordered_items = sorted(norm.items())
+            qs = urlencode(ordered_items, doseq=True)
+            request_params = dict(ordered_items)
         sign = self._sign(method=m, url=path, query_string=qs, body_str=body_str, ts=ts)
         hdrs = dict(self._headers(ts, sign))
         if extra_headers:
             hdrs.update({str(k): str(v) for k, v in extra_headers.items()})
-        code, data, text = self._request(m, path, params=params, data=body_str if body_str else None, headers=hdrs)
+        code, data, text = self._request(
+            m,
+            path,
+            params=request_params,
+            data=body_str if body_str else None,
+            headers=hdrs,
+        )
         if code >= 400:
             raise LiveTradingError(f"Gate HTTP {code}: {text[:500]}")
         return data
@@ -185,11 +197,13 @@ class GateSpotClient(_GateBase):
         qty = float(size or 0.0)
         if qty <= 0:
             raise LiveTradingError("Invalid size")
+        # Gate defaults time_in_force to gtc; market orders only accept ioc/fok.
         body: Dict[str, Any] = {
             "currency_pair": to_gate_currency_pair(symbol),
             "side": sd,
             "type": "market",
             "amount": str(qty),
+            "time_in_force": "ioc",
         }
         text = self._format_text(client_order_id)
         if text:
@@ -316,6 +330,8 @@ class GateUsdtFuturesClient(_GateBase):
         # Best-effort cache for contract metadata to convert base qty -> contracts.
         self._contract_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
         self._contract_cache_ttl_sec = 300.0
+        self._position_mode_cache: Tuple[float, str] = (0.0, "")
+        self._position_mode_cache_ttl_sec = 30.0
 
     @staticmethod
     def _to_dec(x: Any) -> Decimal:
@@ -326,10 +342,7 @@ class GateUsdtFuturesClient(_GateBase):
 
     @staticmethod
     def _floor(value: Decimal) -> Decimal:
-        try:
-            return value.to_integral_value(rounding=ROUND_DOWN)
-        except Exception:
-            return Decimal("0")
+        return floor_decimal_to_step(value, Decimal("1"))
 
     def ping(self) -> bool:
         # Gate futures REST no longer serves /api/v4/futures/usdt/time (returns 400 on fx-api / api hosts).
@@ -339,6 +352,29 @@ class GateUsdtFuturesClient(_GateBase):
             return True
         except Exception:
             return False
+
+    def get_funding_payments(self, *, symbol: str, start_time_ms: int, end_time_ms: int, limit: int = 100):
+        contract = to_gate_currency_pair(symbol)
+        raw = self._signed_request(
+            "GET",
+            "/api/v4/futures/usdt/account_book",
+            params={"contract": contract, "type": "fund", "from": int(start_time_ms // 1000),
+                    "to": int(end_time_ms // 1000), "limit": min(1000, max(1, int(limit or 100)))},
+        )
+        rows = raw if isinstance(raw, list) else (raw.get("data") or []) if isinstance(raw, dict) else []
+        out = []
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            amount = float(item.get("change") or 0.0)
+            seconds = int(float(item.get("time") or item.get("create_time") or 0))
+            out.append({
+                "id": str(item.get("id") or item.get("trade_id") or f"{seconds}:{amount}"),
+                "symbol": str(item.get("contract") or contract), "amount": amount,
+                "asset": "USDT", "time": seconds * 1000 if seconds < 10_000_000_000 else seconds,
+                "raw": item,
+            })
+        return out
 
     def get_ticker(self, *, symbol: str) -> Dict[str, Any]:
         contract = to_gate_currency_pair(symbol)
@@ -411,9 +447,9 @@ class GateUsdtFuturesClient(_GateBase):
 
         if dp > 0:
             step = Decimal(10) ** (-dp)
-            q = contracts.quantize(step, rounding=ROUND_DOWN)
+            q = floor_decimal_to_step(contracts, step)
             if q < order_min and contracts > 0:
-                q = order_min
+                return ("0", {"X-Gate-Size-Decimal": "1"})
             signed_q = q * sign
             s = format(signed_q, "f")
             if "." in s:
@@ -424,7 +460,7 @@ class GateUsdtFuturesClient(_GateBase):
             iv = int(self._floor(contracts))
             int_min = max(1, int(order_min))
             if iv < int_min and contracts > 0:
-                iv = int_min
+                return ("0", None)
             signed_iv = int(Decimal(iv) * sign)
             return (str(signed_iv), None)
 
@@ -467,13 +503,56 @@ class GateUsdtFuturesClient(_GateBase):
     def get_accounts(self) -> Any:
         return self._signed_request("GET", "/api/v4/futures/usdt/accounts")
 
+    def get_position_mode(self) -> str:
+        """Return Gate futures ``single`` / ``dual`` / ``dual_plus`` mode."""
+        now = time.time()
+        cached_at, cached_mode = getattr(self, "_position_mode_cache", (0.0, ""))
+        ttl = float(getattr(self, "_position_mode_cache_ttl_sec", 30.0) or 30.0)
+        if cached_mode and (now - float(cached_at or 0.0)) <= ttl:
+            return cached_mode
+
+        account = self.get_accounts() or {}
+        if not isinstance(account, dict):
+            return ""
+        mode = str(account.get("position_mode") or "").strip().lower()
+        if mode not in ("single", "dual", "dual_plus"):
+            dual = account.get("in_dual_mode")
+            if dual is True:
+                mode = "dual"
+            elif dual is False:
+                mode = "single"
+            else:
+                mode = ""
+        if mode:
+            self._position_mode_cache = (now, mode)
+        return mode
+
+    def is_hedge_position_mode(self, *, symbol: str = "") -> Optional[bool]:
+        _ = symbol
+        mode = self.get_position_mode()
+        if mode == "dual":
+            return True
+        if mode == "single":
+            return False
+        # dual_plus is Gate's split-position mode. It can create multiple
+        # independent same-side positions and requires position/margin routing
+        # fields that do not map to this system's one-long + one-short ledger.
+        # Do not misreport it as the standard dual mode.
+        return None
+
     def get_positions(self) -> Any:
+        mode = self.get_position_mode()
+        path = (
+            "/api/v4/futures/usdt/dual_comp/positions"
+            if mode == "dual"
+            else "/api/v4/futures/usdt/positions"
+        )
         return self._signed_request(
-            "GET", "/api/v4/futures/usdt/positions",
+            "GET", path,
             extra_headers={"X-Gate-Size-Decimal": "1"},
         )
 
-    def set_leverage(self, *, contract: str, leverage: float) -> bool:
+    def set_leverage(self, *, contract: str, leverage: float, margin_mode: str = "cross") -> bool:
         c = str(contract or "").strip()
         if not c:
             return False
@@ -483,26 +562,53 @@ class GateUsdtFuturesClient(_GateBase):
             lv = 1
         if lv < 1:
             lv = 1
-        path = f"/api/v4/futures/usdt/positions/{c}/leverage"
+        try:
+            meta = self.get_contract(contract=c) or {}
+        except Exception:
+            meta = {}
+        try:
+            max_leverage = int(float(meta.get("leverage_max") or meta.get("leverageMax") or 0))
+        except (TypeError, ValueError):
+            max_leverage = 0
+        if max_leverage > 0 and lv > max_leverage:
+            raise LiveTradingError(
+                f"Gate leverage {lv}x exceeds the current {c} maximum {max_leverage}x"
+            )
+
+        position_mode = self.get_position_mode()
+        if position_mode in ("dual", "dual_plus"):
+            path = f"/api/v4/futures/usdt/dual_comp/positions/{c}/leverage"
+        else:
+            path = f"/api/v4/futures/usdt/positions/{c}/leverage"
         lv_s = str(lv)
         # Gate expects ``leverage`` / ``cross_leverage_limit`` as **query parameters**, not JSON body
         # (see gateapi-python: update_position_leverage). Cross / portfolio mode: leverage=0 + cross_leverage_limit.
-        attempts: Tuple[Dict[str, str], ...] = (
-            {"leverage": lv_s},
-            {"leverage": "0", "cross_leverage_limit": lv_s},
-            {"leverage": lv_s, "cross_leverage_limit": lv_s},
-        )
-        last_err: Optional[Exception] = None
-        for qp in attempts:
-            try:
-                _ = self._signed_request("POST", path, params=qp, json_body=None)
-                return True
-            except LiveTradingError as e:
-                last_err = e
-            except Exception as e:
-                last_err = e
-        logger.warning("Gate set_leverage failed contract=%s leverage=%s: %s", c, lv, last_err)
-        return False
+        mode = str(margin_mode or "cross").strip().lower()
+        if mode in ("cross", "crossed"):
+            params = {"leverage": "0", "cross_leverage_limit": lv_s}
+        elif mode in ("isolated", "iso"):
+            params = {"leverage": lv_s}
+        else:
+            return False
+        response = self._signed_request("POST", path, params=params, json_body=None)
+        if isinstance(response, dict):
+            effective_raw = (
+                response.get("cross_leverage_limit")
+                if mode in ("cross", "crossed")
+                else response.get("leverage")
+            )
+            if effective_raw not in (None, ""):
+                try:
+                    effective = int(float(effective_raw))
+                except (TypeError, ValueError) as exc:
+                    raise LiveTradingError(
+                        f"Gate returned an invalid effective leverage: {effective_raw}"
+                    ) from exc
+                if effective != lv:
+                    raise LiveTradingError(
+                        f"Gate applied {effective}x instead of requested {lv}x leverage"
+                    )
+        return True
 
     def place_market_order(
         self,
@@ -652,6 +758,11 @@ class GateUsdtFuturesClient(_GateBase):
             try:
                 # Gate futures often returns "filled_size" in contracts.
                 filled_ct = abs(float(last.get("filled_size") or last.get("filledSize") or 0.0))
+                if filled_ct <= 0:
+                    size_ct = abs(float(last.get("size") or 0.0))
+                    left_ct = abs(float(last.get("left") or 0.0))
+                    if size_ct > 0:
+                        filled_ct = max(0.0, size_ct - left_ct)
                 filled = float(Decimal(str(filled_ct)) * qm)
             except Exception:
                 filled = 0.0
@@ -696,5 +807,3 @@ class GateUsdtFuturesClient(_GateBase):
             if timed_out:
                 return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "status": status, "order": last}
             time.sleep(float(poll_interval_sec or 0.5))
-
-

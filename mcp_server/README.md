@@ -1,114 +1,115 @@
-# QuantDinger MCP server
+# QuantDinger MCP Server
 
-[![PyPI](https://img.shields.io/pypi/v/quantdinger-mcp?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/quantdinger-mcp/)
-[![Python](https://img.shields.io/pypi/pyversions/quantdinger-mcp?style=flat-square&logo=python&logoColor=white)](https://pypi.org/project/quantdinger-mcp/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square)](../LICENSE)
+The MCP server is a thin, tenant-scoped wrapper over `/api/agent/v1`. It exposes research universes and factors, market data, chart-indicator authoring, Strategy API V2 deployment and backtesting, broker/execution observations, notification automation, bounded jobs, and safety-gated trading.
 
-Thin Model Context Protocol server that exposes a curated subset of the
-QuantDinger Agent Gateway (`/api/agent/v1`) as MCP tools, so AI clients
-that support MCP (Cursor, Claude-style desktop apps, OpenClaw, NanoBot, etc.)
-can drive QuantDinger without writing custom HTTP code.
-
-This package is an **additive** integration. The Agent Gateway REST API
-remains the source of truth.
-
-## What it exposes
-
-Read-class (R) and Backtest-class (B) tools only — no live trading from
-MCP. Use the REST `/api/agent/v1/quick-trade/...` endpoints if/when you
-explicitly enable trading for an agent.
-
-| Tool | Class | Purpose |
-|------|-------|---------|
-| `whoami`               | R | Inspect the calling token |
-| `list_markets`         | R | Markets the token may query |
-| `search_symbols`       | R | Symbols within a market |
-| `get_klines`           | R | OHLCV bars |
-| `get_price`            | R | Latest price |
-| `list_strategies`      | R | Tenant's strategies |
-| `get_strategy`         | R | One strategy |
-| `submit_backtest`      | B | Queue a backtest |
-| `get_job`              | R | Poll a job |
-| `regime_detect`        | B | Synchronous regime detection |
-| `submit_structured_tune` | B | Queue grid/random tuning |
-
-## Install
-
-From PyPI (recommended — works on any machine without cloning the repo):
+## Install and run
 
 ```bash
-pipx install quantdinger-mcp
-# or, no install at all (cached on first run):
-uvx quantdinger-mcp
-# or, into a venv:
-pip install quantdinger-mcp
-```
-
-Editable install for hacking on the server itself:
-
-```bash
-cd mcp_server
-pip install -e .
-```
-
-## Run
-
-Configuration is env-only so the same binary works in desktop and cloud.
-
-| Variable | Required | Purpose |
-|----------|----------|---------|
-| `QUANTDINGER_BASE_URL`     | yes | e.g. `http://localhost:8888` |
-| `QUANTDINGER_AGENT_TOKEN`  | yes | a token issued via `/api/agent/v1/admin/tokens` |
-| `QUANTDINGER_MCP_TRANSPORT`| no  | `stdio` (default), `sse`, or `streamable-http` |
-| `QUANTDINGER_MCP_HOST`     | no  | bind host for HTTP transports (default `127.0.0.1`) |
-| `QUANTDINGER_MCP_PORT`     | no  | bind port for HTTP transports (default `8000`) |
-| `QUANTDINGER_TIMEOUT_S`    | no  | upstream HTTP timeout (default `60`) |
-
-### stdio (desktop IDEs)
-
-```bash
-QUANTDINGER_BASE_URL=http://localhost:8888 \
-QUANTDINGER_AGENT_TOKEN=qd_agent_xxxxx \
+pip install "quantdinger-mcp==0.5.0"
+export QUANTDINGER_BASE_URL=http://localhost:8888
+export QUANTDINGER_AGENT_TOKEN=qd_agent_xxx
 quantdinger-mcp
 ```
 
-### SSE / Streamable HTTP (cloud agents, remote IDEs)
+`pipx install quantdinger-mcp` and `uvx quantdinger-mcp` are also supported. Use `pip install -e ./mcp_server` only when developing from a repository checkout.
+
+The default transport is `stdio`. Set `QUANTDINGER_MCP_TRANSPORT` to `sse` or `streamable-http` for a network transport. Optional limits include `QUANTDINGER_TIMEOUT_S`, `QUANTDINGER_MCP_JOB_STREAM_MAX_EVENTS`, `QUANTDINGER_MCP_JOB_STREAM_MAX_SECONDS`, and `QUANTDINGER_MCP_JOB_POLL_MAX_SECONDS`.
+
+Network transports bound to a non-loopback host require a separate inbound bearer token. This token authenticates MCP clients and must not be the Agent Gateway token:
 
 ```bash
-QUANTDINGER_BASE_URL=http://localhost:8888 \
-QUANTDINGER_AGENT_TOKEN=qd_agent_xxxxx \
-QUANTDINGER_MCP_TRANSPORT=streamable-http \
-QUANTDINGER_MCP_HOST=0.0.0.0 \
-QUANTDINGER_MCP_PORT=7800 \
+export QUANTDINGER_MCP_TRANSPORT=streamable-http
+export QUANTDINGER_MCP_HOST=0.0.0.0
+export QUANTDINGER_MCP_PORT=7800
+export QUANTDINGER_MCP_PUBLIC_URL=https://mcp.example.com
+export QUANTDINGER_MCP_AUTH_TOKEN=replace-with-a-random-32-plus-character-secret
 quantdinger-mcp
 ```
 
-The server is then reachable at `http://<host>:7800/`. Use `sse` instead of
-`streamable-http` for clients that only support the older SSE transport.
+Clients must send `Authorization: Bearer <QUANTDINGER_MCP_AUTH_TOKEN>` to `/mcp` or `/sse`. Authenticated non-loopback listeners require an HTTPS `QUANTDINGER_MCP_PUBLIC_URL`. `QUANTDINGER_MCP_ALLOW_HTTP=true` is only for a trusted private proxy that terminates TLS. For an unauthenticated private ingress that already authenticates every request, `QUANTDINGER_MCP_ALLOW_INSECURE_HTTP=true` remains a separate escape hatch; never use either setting on a directly reachable public listener.
 
-## Wire into a client
+Docker builds use the official PyPI index by default. In regions where it is slow, override it without editing the image definition: `docker build --build-arg PIP_INDEX_URL=https://your-mirror.example/simple .`.
 
-### Local stdio client config
+Never place an agent token in prompts, logs, screenshots, source control, or MCP configuration that will be shared. Responses redact credential fields, and clients must not attempt to recover them.
 
-```json
-{
-  "mcpServers": {
-    "quantdinger": {
-      "command": "quantdinger-mcp",
-      "env": {
-        "QUANTDINGER_BASE_URL": "http://localhost:8888",
-        "QUANTDINGER_AGENT_TOKEN": "qd_agent_xxxxxxxx"
-      }
-    }
-  }
-}
+## Tool surface
+
+| Tool group | Scope | Purpose |
+|---|---:|---|
+| `whoami`, `check_health` | R/public | Identity, allowlists, and liveness |
+| `list_markets`, `search_symbols`, `get_klines`, `get_price` | R | Market discovery and data |
+| Universe and factor tools | R | Point-in-time research inputs |
+| `list_watchlist`, `add_watchlist`, `remove_watchlist` | R/W | Watchlist workspace |
+| Indicator authoring, validation, save, link, and read tools | R/W | Chart-only indicators |
+| `list_strategy_templates`, `compile_strategy_code` | R | Strategy API V2 templates and manifest compilation |
+| `list_strategy_sources`, `get_strategy_source`, `save_strategy_source` | R/W | Private Strategy API V2 source library |
+| `list_strategy_source_versions`, `restore_strategy_source_version` | R/W | Source history and explicitly confirmed restore |
+| `create_strategy`, `update_strategy`, `list_strategies`, `get_strategy` | R/W | Strategy API V2 deployments |
+| `submit_backtest` | B | Strategy API V2 backtest job |
+| `list_jobs`, `get_job`, `wait_for_job`, `stream_job_until_done`, `cancel_job` | R/B | Bounded jobs and confirmed cancellation |
+| `runtime_overview`, `stop_strategy` | R/T | Runtime inspection and confirmed stop |
+| Broker account, strategy position/trade, and quick-trade observation tools | R | Secret-free execution observations |
+| Signal-alert tools | N | Notification task lifecycle and confirmed delivery evaluation |
+| `place_quick_order` | T | Confirmed order with token notional caps |
+| `list_portfolio_positions`, `list_paper_orders` | R | Portfolio and paper-order reads |
+| `emergency_stop_trading`, `cancel_open_paper_orders` | T | Emergency cancellation and T-token revocation |
+
+Every mutating W/B/N/T tool requires a caller-generated `idempotency_key`; retries of the same request must reuse it. `stop_strategy` requires `confirm_stop=true`. `place_quick_order` requires `confirm_order=true`; a live-capable token also requires `confirm_live_trading=true`. Optional `tp_price` and `sl_price` protection are forwarded to the shared Quick Trade execution path. Server-side trading flags, allowlists, and per-order/per-day notional caps still apply.
+
+## Strategy API V2 workflow
+
+Executable strategy code must define `initialize(context)` and declare its universe and subscriptions. It must provide `handle_data`, `on_rebalance`, or a scheduled callback. The manifest owns instruments, markets, frequencies, factor dependencies, warmup, and leverage policy.
+
+Compile and save a source before creating a stopped deployment:
+
+```text
+compile_strategy_code(code="...Strategy API V2 Python...")
+save_strategy_source(name="btc-momentum", code="...Strategy API V2 Python...")
 ```
 
-### Remote HTTP client config
+Use the returned source id:
 
-For clients that connect to an MCP server over HTTP/SSE rather than spawning
-a subprocess, point them at the URL the server is bound to (e.g.
-`http://your-host:7800`) and let the client handle protocol negotiation.
+```text
+create_strategy(
+  name="btc-momentum",
+  source_id=12,
+  initial_capital=10000,
+  execution_mode="signal",
+  params={"lookback": 40},
+  idempotency_key="deploy-btc-momentum-v1"
+)
+```
 
-Never put production exchange keys or admin JWTs in the MCP config — only
-agent tokens, scoped to the capabilities the client actually needs.
+Run a backtest directly from V2 code:
+
+```text
+submit_backtest(
+  code="...Strategy API V2 Python...",
+  start_date="2025-01-01",
+  end_date="2025-12-31",
+  initial_capital=10000,
+  params={"lookback": 40},
+  idempotency_key="btc-momentum-2025"
+)
+```
+
+Market, symbol, and timeframe are not backtest parameters. They come from the compiled strategy manifest. Use `wait_for_job` or `stream_job_until_done` to obtain the result.
+
+Indicators are chart-only. Validate and save them through the indicator tools, then convert the idea into Strategy API V2 code before using `submit_backtest` or `create_strategy`.
+
+Restoring a source snapshot requires `confirm_restore=true`. The emergency stop requires confirmation, attempts to cancel agent-originated live orders, cancels paper orders, revokes every active tenant T token, and reports exchange cancellations needing human follow-up.
+
+The optional Docker network service is enabled explicitly:
+
+```bash
+QUANTDINGER_AGENT_TOKEN=qd_agent_xxx \
+QUANTDINGER_MCP_AUTH_TOKEN="$(openssl rand -hex 32)" \
+docker compose --profile mcp up -d --build mcp
+```
+
+## Development
+
+```bash
+pip install -e './mcp_server[dev]'
+pytest mcp_server/tests
+```

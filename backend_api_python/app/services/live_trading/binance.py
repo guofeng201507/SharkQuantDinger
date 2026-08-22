@@ -16,21 +16,24 @@ from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlencode
 
 from app.services.live_trading.base import BaseRestClient, LiveOrderResult, LiveTradingError
+from app.utils.numeric_precision import floor_decimal_to_step, format_decimal
 
 logger = logging.getLogger(__name__)
 from app.services.live_trading.symbols import to_binance_futures_symbol
 
 
 class BinanceFuturesClient(BaseRestClient):
+    _BROKER_ID = "HBpUbQjT"
+
     def __init__(self, *, api_key: str, secret_key: str, base_url: str = None, enable_demo_trading: bool = False, timeout_sec: float = 15.0, broker_id: str = ""):
         if not base_url:
-            # Binance USDT-M Futures Testnet (official): https://testnet.binancefuture.com
-            base_url = "https://testnet.binancefuture.com" if enable_demo_trading else "https://fapi.binance.com"
+            # Binance USD-M Futures demo REST endpoint.
+            base_url = "https://demo-fapi.binance.com" if enable_demo_trading else "https://fapi.binance.com"
 
         super().__init__(base_url=base_url, timeout_sec=timeout_sec)
         self.api_key = (api_key or "").strip()
         self.secret_key = (secret_key or "").strip()
-        self.broker_id = (broker_id or "").strip()
+        self.broker_id = self._BROKER_ID
         if not self.api_key or not self.secret_key:
             raise LiveTradingError("Missing Binance api_key/secret_key")
 
@@ -148,21 +151,7 @@ class BinanceFuturesClient(BaseRestClient):
 
     @staticmethod
     def _floor_to_step(value: Decimal, step: Decimal) -> Decimal:
-        if step is None:
-            return value
-        if value <= 0:
-            return Decimal("0")
-        try:
-            st = Decimal(step)
-        except Exception:
-            st = Decimal("0")
-        if st <= 0:
-            return value
-        try:
-            n = (value / st).to_integral_value(rounding=ROUND_DOWN)
-            return n * st
-        except Exception:
-            return Decimal("0")
+        return floor_decimal_to_step(value, step)
 
     def _sign(self, query_string: str) -> str:
         sig = hmac.new(self.secret_key.encode("utf-8"), query_string.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -262,6 +251,33 @@ class BinanceFuturesClient(BaseRestClient):
         except Exception:
             return 0.0
 
+    def get_funding_payments(self, *, symbol: str, start_time_ms: int, end_time_ms: int, limit: int = 100):
+        sym = to_binance_futures_symbol(symbol)
+        raw = self._signed_request(
+            "GET",
+            "/fapi/v1/income",
+            params={
+                "symbol": sym,
+                "incomeType": "FUNDING_FEE",
+                "startTime": int(start_time_ms),
+                "endTime": int(end_time_ms),
+                "limit": min(1000, max(1, int(limit or 100))),
+            },
+        )
+        rows = raw.get("raw") if isinstance(raw, dict) else raw
+        if not isinstance(rows, list):
+            return []
+        return [
+            {
+                "id": str(item.get("tranId") or f"{item.get('time')}:{item.get('income')}"),
+                "symbol": str(item.get("symbol") or sym),
+                "amount": float(item.get("income") or 0.0),
+                "asset": str(item.get("asset") or "USDT").upper(),
+                "time": int(item.get("time") or 0),
+                "raw": item,
+            }
+            for item in rows if isinstance(item, dict)
+        ]
     def get_symbol_filters(self, *, symbol: str) -> Dict[str, Any]:
         """
         Get futures symbol filters from exchangeInfo (best-effort).
@@ -325,7 +341,7 @@ class BinanceFuturesClient(BaseRestClient):
             return value
         try:
             q = Decimal("1").scaleb(-p)  # 1e-precision
-            return value.quantize(q, rounding=ROUND_DOWN)
+            return floor_decimal_to_step(value, q)
         except Exception:
             return value
 
@@ -377,48 +393,29 @@ class BinanceFuturesClient(BaseRestClient):
         except Exception:
             fdict = {}
 
-        key = "MARKET_LOT_SIZE" if for_market else "LOT_SIZE"
-        filt = fdict.get(key) or fdict.get("LOT_SIZE") or {}
+        from app.services.live_trading.binance_spot import BinanceSpotClient as _BSC
+
+        filt = _BSC._pick_lot_filter(fdict, for_market=for_market)
 
         step = self._to_dec((filt or {}).get("stepSize") or "0")
         min_qty = self._to_dec((filt or {}).get("minQty") or "0")
 
         if step > 0:
             q = self._floor_to_step(q, step)
-        
-        # Enforce quantity precision cap (Binance may reject quantities with too many decimals: -1111).
-        # First try to get precision from metadata
-        qty_precision = None
+
+        step_precision = _BSC._decimal_places_from_step(step)
+        qty_precision = step_precision
         try:
             meta = fdict.get("_meta") or {}
-            if isinstance(meta, dict):
-                qty_precision = meta.get("quantityPrecision")
+            if isinstance(meta, dict) and meta.get("quantityPrecision") is not None:
+                meta_prec = int(meta.get("quantityPrecision"))
+                if step_precision is None:
+                    qty_precision = meta_prec
+                else:
+                    qty_precision = min(meta_prec, step_precision)
         except Exception:
             pass
-        
-        # If precision not available, infer from stepSize
-        if qty_precision is None and step > 0:
-            try:
-                # stepSize like "0.001" means 3 decimal places
-                # Use normalize() to remove trailing zeros, then count decimal places
-                step_normalized = step.normalize()
-                step_str = str(step_normalized)
-                if '.' in step_str:
-                    # Count decimal places after removing trailing zeros
-                    decimal_part = step_str.split('.')[1]
-                    qty_precision = len(decimal_part)
-                    # Ensure precision is at least 0 and at most 18
-                    if qty_precision < 0:
-                        qty_precision = 0
-                    if qty_precision > 18:
-                        qty_precision = 18
-                else:
-                    # If stepSize is 1 or larger, precision is 0
-                    qty_precision = 0
-            except Exception:
-                pass
-        
-        # Apply precision limit
+
         if qty_precision is not None:
             q = self._floor_to_precision(q, qty_precision)
         
@@ -494,7 +491,7 @@ class BinanceFuturesClient(BaseRestClient):
         return 0.0, ""
 
     def get_fee_rate(self, symbol: str, market_type: str = "swap") -> Optional[Dict[str, float]]:
-        sym = symbol.upper().replace("-", "").replace("/", "")
+        sym = to_binance_futures_symbol(symbol)
         try:
             data = self._signed_request("GET", "/fapi/v1/commissionRate", params={"symbol": sym})
             if isinstance(data, dict):
@@ -503,7 +500,7 @@ class BinanceFuturesClient(BaseRestClient):
                 if maker > 0 or taker > 0:
                     return {"maker": maker, "taker": taker}
         except Exception as e:
-            logger.warning(f"Binance get_fee_rate({symbol}) failed: {e}")
+            logger.warning(f"Binance get_fee_rate({symbol}, symbol_param={sym}) failed: {e}")
         return None
 
     def set_leverage(self, *, symbol: str, leverage: float) -> Dict[str, Any]:
@@ -527,8 +524,22 @@ class BinanceFuturesClient(BaseRestClient):
         if lev < 1:
             lev = 1
         if lev > 125:
-            lev = 125
-        return self._signed_request("POST", "/fapi/v1/leverage", params={"symbol": sym, "leverage": lev})
+            raise LiveTradingError(f"Binance leverage {lev}x exceeds the API maximum 125x")
+        response = self._signed_request(
+            "POST", "/fapi/v1/leverage", params={"symbol": sym, "leverage": lev}
+        )
+        if isinstance(response, dict) and response.get("leverage") not in (None, ""):
+            try:
+                effective = int(float(response.get("leverage")))
+            except (TypeError, ValueError) as exc:
+                raise LiveTradingError(
+                    f"Binance returned an invalid effective leverage: {response.get('leverage')}"
+                ) from exc
+            if effective != lev:
+                raise LiveTradingError(
+                    f"Binance applied {effective}x instead of requested {lev}x leverage"
+                )
+        return response
 
     def get_dual_side_position(self) -> Optional[bool]:
         """
@@ -668,24 +679,24 @@ class BinanceFuturesClient(BaseRestClient):
                     avg_price = 0.0
 
             if filled > 0 and avg_price > 0:
-                fee, fee_ccy = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
-                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "status": status, "order": last}
+                fee, fee_ccy, fees = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
+                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "fees_by_ccy": fees, "status": status, "order": last}
 
             if status in ("FILLED", "CANCELED", "EXPIRED", "REJECTED"):
-                fee, fee_ccy = 0.0, ""
+                fee, fee_ccy, fees = 0.0, "", {}
                 if filled > 0:
-                    fee, fee_ccy = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
-                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "status": status, "order": last}
+                    fee, fee_ccy, fees = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
+                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "fees_by_ccy": fees, "status": status, "order": last}
 
             if time.time() >= end_ts:
-                fee, fee_ccy = 0.0, ""
+                fee, fee_ccy, fees = 0.0, "", {}
                 if filled > 0:
-                    fee, fee_ccy = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
-                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "status": status, "order": last}
+                    fee, fee_ccy, fees = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
+                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "fees_by_ccy": fees, "status": status, "order": last}
             time.sleep(float(poll_interval_sec or 0.5))
 
-    def _fetch_commission_for_order(self, *, symbol: str, order_id: str, filled: float, avg_price: float) -> Tuple[float, str]:
-        """Fetch real commission from userTrades; fall back to commissionRate calculation."""
+    def _fetch_commission_for_order(self, *, symbol: str, order_id: str, filled: float, avg_price: float) -> Tuple[float, str, Dict[str, float]]:
+        """Fetch authoritative per-fill commission from USD-M futures trades."""
         oid = str(order_id or "").strip()
         # Method 1: userTrades (up to 3 attempts with 1s delay)
         for attempt in range(3):
@@ -693,8 +704,7 @@ class BinanceFuturesClient(BaseRestClient):
                 trades = self.get_user_trades(symbol=symbol, order_id=oid, limit=200) if oid else []
                 if not isinstance(trades, list):
                     trades = []
-                total_fee = 0.0
-                fee_ccy = ""
+                fees: Dict[str, float] = {}
                 for t in trades:
                     if not isinstance(t, dict):
                         continue
@@ -704,12 +714,13 @@ class BinanceFuturesClient(BaseRestClient):
                         c = 0.0
                     ccy = str(t.get("commissionAsset") or "").strip()
                     if c != 0.0:
-                        total_fee += abs(c)
-                        if not fee_ccy and ccy:
-                            fee_ccy = ccy
-                if total_fee > 0:
-                    logger.debug("Binance fee via userTrades: %.8f %s (order=%s, attempt=%d)", total_fee, fee_ccy, oid, attempt)
-                    return total_fee, fee_ccy
+                        key = ccy.upper() if ccy else "UNKNOWN"
+                        fees[key] = fees.get(key, 0.0) + abs(c)
+                if fees:
+                    fee_ccy = next(iter(fees)) if len(fees) == 1 else "MIXED"
+                    total_fee = sum(fees.values()) if len(fees) == 1 else 0.0
+                    logger.debug("Binance fee via userTrades: %s (order=%s, attempt=%d)", fees, oid, attempt)
+                    return total_fee, fee_ccy, fees
                 if attempt < 2:
                     time.sleep(1.5)
             except Exception as e:
@@ -717,21 +728,16 @@ class BinanceFuturesClient(BaseRestClient):
                 if attempt < 2:
                     time.sleep(1.0)
 
-        # Method 2: calculate from commissionRate
-        if filled > 0 and avg_price > 0:
-            try:
-                rate_info = self.get_fee_rate(symbol=symbol)
-                if rate_info:
-                    taker_rate = float(rate_info.get("taker") or 0.0)
-                    if taker_rate > 0:
-                        calc_fee = filled * avg_price * taker_rate
-                        logger.info("Binance fee via commissionRate: %.8f USDT (rate=%.6f, order=%s)", calc_fee, taker_rate, oid)
-                        return calc_fee, "USDT"
-            except Exception as e:
-                logger.warning("Binance commissionRate fallback failed: %s", e)
-
-        logger.warning("Binance could not obtain fee for order=%s symbol=%s", oid, symbol)
-        return 0.0, ""
+        # Do not reconstruct historical fees from the account's current rate.
+        # userTrades is the authoritative source for both the charged amount and
+        # the actual commission asset. The reconciliation worker retries later
+        # when Binance has not exposed the fill rows yet.
+        logger.warning(
+            "Binance userTrades has no authoritative fee yet for order=%s symbol=%s",
+            oid,
+            symbol,
+        )
+        return 0.0, "", {}
 
     def place_market_order(
         self,
@@ -750,7 +756,9 @@ class BinanceFuturesClient(BaseRestClient):
         q_req = float(quantity or 0.0)
         q_dec, qty_precision = self._normalize_quantity(symbol=symbol, quantity=q_req, for_market=True)
         if float(q_dec or 0) <= 0:
-            raise LiveTradingError(f"Invalid quantity (below step/minQty): requested={q_req}")
+            raise LiveTradingError(
+                f"Invalid quantity (below step/minQty): requested={format_decimal(q_req)}"
+            )
 
         # Best-effort MIN_NOTIONAL validation (common reason for "open still fails" with small qty).
         # Use markPrice as an approximation for MARKET order notional.
@@ -913,10 +921,14 @@ class BinanceFuturesClient(BaseRestClient):
             raise LiveTradingError("Invalid quantity/price")
         q_dec, qty_precision = self._normalize_quantity(symbol=symbol, quantity=q_req, for_market=False)
         if float(q_dec or 0) <= 0:
-            raise LiveTradingError(f"Invalid quantity (below step/minQty): requested={q_req}")
+            raise LiveTradingError(
+                f"Invalid quantity (below step/minQty): requested={format_decimal(q_req)}"
+            )
         px_dec = self._normalize_price(symbol=symbol, price=px)
         if float(px_dec or 0) <= 0:
-            raise LiveTradingError(f"Invalid price (bad tick/minPrice): requested={px}")
+            raise LiveTradingError(
+                f"Invalid price (bad tick/minPrice): requested={format_decimal(px)}"
+            )
 
         params: Dict[str, Any] = {
             "symbol": sym,
@@ -1033,4 +1045,28 @@ class BinanceFuturesClient(BaseRestClient):
         sym = to_binance_futures_symbol(want)
         return [p for p in rows if isinstance(p, dict) and str(p.get("symbol") or "") == sym]
 
+    def get_symbol_configuration(self, *, symbol: str) -> Dict[str, Any]:
+        """Read back symbol-level margin mode and leverage from positionRisk.
 
+        Binance documents both ``marginType`` and ``leverage`` on
+        ``GET /fapi/v2/positionRisk``.  This read is used to resolve the
+        ambiguous outcome of a ``-1007`` timeout from configuration POSTs.
+        """
+        rows = self.get_positions(symbol=symbol) or []
+        row = next((item for item in rows if isinstance(item, dict)), None)
+        if not row:
+            raise LiveTradingError(f"Binance symbol configuration unavailable: {symbol}")
+        mode = str(row.get("marginType") or "").strip().lower()
+        if mode in {"cross", "crossed"}:
+            mode = "cross"
+        elif mode in {"isolated", "iso"}:
+            mode = "isolated"
+        try:
+            leverage = int(float(row.get("leverage") or 0))
+        except Exception:
+            leverage = 0
+        return {
+            "symbol": str(row.get("symbol") or to_binance_futures_symbol(symbol)),
+            "margin_mode": mode,
+            "leverage": leverage,
+        }

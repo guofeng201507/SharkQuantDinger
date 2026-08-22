@@ -13,19 +13,24 @@ import hashlib
 import hmac
 import datetime
 import logging
+import os
 import time
-from decimal import Decimal, ROUND_DOWN
-from typing import Any, Dict, Optional, Tuple
+from decimal import Decimal
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode, urlparse
 
 from app.services.live_trading.base import BaseRestClient, LiveOrderResult, LiveTradingError
 from app.services.live_trading import htx_v5
 from app.services.live_trading.symbols import to_htx_contract_code, to_htx_spot_symbol
+from app.utils.numeric_precision import floor_decimal_to_step
 
 logger = logging.getLogger(__name__)
 
 
 class HtxClient(BaseRestClient):
+    _BROKER_ID = "AA7b890547"
+    _SPOT_SOURCE = "spot-api"
+
     def __init__(
         self,
         *,
@@ -36,6 +41,8 @@ class HtxClient(BaseRestClient):
         timeout_sec: float = 15.0,
         market_type: str = "swap",
         broker_id: str = "",
+        spot_source: str = "spot-api",
+        margin_mode: str = "cross",
     ):
         chosen_base = futures_base_url if str(market_type or "").strip().lower() == "swap" else base_url
         super().__init__(base_url=chosen_base, timeout_sec=timeout_sec)
@@ -44,7 +51,13 @@ class HtxClient(BaseRestClient):
         self.api_key = (api_key or "").strip()
         self.secret_key = (secret_key or "").strip()
         self.market_type = (market_type or "swap").strip().lower()
-        self.broker_id = (broker_id or "").strip()
+        self.broker_id = self._BROKER_ID
+        self.spot_source = self._SPOT_SOURCE
+        requested_margin_mode = str(margin_mode or "cross").strip().lower()
+        self.margin_mode = "isolated" if requested_margin_mode in ("isolated", "iso") else "cross"
+        self.allow_auto_asset_mode_switch = str(
+            os.getenv("QD_HTX_ALLOW_AUTO_ASSET_MODE_SWITCH", "false")
+        ).strip().lower() in ("1", "true", "yes")
         if self.market_type not in ("spot", "swap"):
             self.market_type = "swap"
         if not self.api_key or not self.secret_key:
@@ -57,6 +70,8 @@ class HtxClient(BaseRestClient):
         self._v5_asset_mode: Optional[int] = None
         self._v5_asset_mode_ts: float = 0.0
         self._v5_multi_asset_switch_tried: bool = False
+        self._pos_mode_cache: Dict[str, Tuple[float, bool]] = {}
+        self._pos_mode_cache_ttl_sec: float = 60.0
 
     @staticmethod
     def _format_swap_client_order_id(client_order_id: Optional[str]) -> Optional[int]:
@@ -101,10 +116,7 @@ class HtxClient(BaseRestClient):
 
     @staticmethod
     def _floor_to_int(value: Decimal) -> int:
-        try:
-            return int(value.to_integral_value(rounding=ROUND_DOWN))
-        except Exception:
-            return 0
+        return int(floor_decimal_to_step(value, Decimal("1")))
 
     def _sign_params(self, *, method: str, base_url: str, path: str, params: Dict[str, Any]) -> Dict[str, Any]:
         signed = dict(params or {})
@@ -201,6 +213,9 @@ class HtxClient(BaseRestClient):
 
     def _try_upgrade_to_multi_asset_mode(self) -> bool:
         """Switch account to multi-asset collateral (asset_mode=1) for V5 private APIs."""
+        if not self.allow_auto_asset_mode_switch:
+            logger.warning("HTX automatic asset-mode switching is disabled")
+            return False
         if self._v5_multi_asset_switch_tried:
             return self._v5_asset_mode == 1
         self._v5_multi_asset_switch_tried = True
@@ -240,6 +255,39 @@ class HtxClient(BaseRestClient):
                 )
         self._raise_v5_error(path, raw)
         return raw  # unreachable
+
+    def get_funding_payments(self, *, symbol: str, start_time_ms: int, end_time_ms: int, limit: int = 100):
+        if self.market_type != "swap":
+            return []
+        contract = to_htx_contract_code(symbol)
+        raw = self._swap_private_request_raw(
+            "POST",
+            "/linear-swap-api/v3/swap_financial_record",
+            json_body={"contract": contract, "mar_acct": contract, "type": "30,31",
+                       "start_time": int(start_time_ms), "end_time": int(end_time_ms),
+                       "direct": "prev"},
+        )
+        if str(raw.get("status") or "").lower() not in ("ok", ""):
+            raise LiveTradingError(f"HTX swap error: {raw}")
+        data = raw.get("data") or {}
+        rows = data.get("financial_record") or data.get("records") or data.get("data") or []
+        if isinstance(rows, dict):
+            rows = rows.get("financial_record") or rows.get("records") or []
+        out = []
+        for item in (rows or [])[:max(1, int(limit or 100))]:
+            if not isinstance(item, dict):
+                continue
+            record_type = str(item.get("type") or "")
+            value = abs(float(item.get("amount") or item.get("change") or 0.0))
+            amount = value if record_type == "30" else -value
+            ts = int(item.get("created_at") or item.get("ts") or item.get("time") or 0)
+            out.append({
+                "id": str(item.get("id") or f"{ts}:{record_type}:{value}"),
+                "symbol": str(item.get("contract") or item.get("contract_code") or contract),
+                "amount": amount, "asset": str(item.get("asset") or item.get("fee_asset") or "USDT").upper(),
+                "time": ts, "raw": item,
+            })
+        return out
 
     def ping(self) -> bool:
         try:
@@ -291,7 +339,99 @@ class HtxClient(BaseRestClient):
         return False
 
     def _default_margin_mode(self) -> str:
-        return "cross"
+        return self.margin_mode
+
+    def detect_swap_hedge_mode(self, *, symbol: str) -> Optional[bool]:
+        """
+        Return the authoritative HTX position mode for ``symbol``.
+
+        ``True`` is ``dual_side``, ``False`` is ``single_side`` and ``None``
+        means the exchange could not be queried. Deployment checks must retain
+        the distinction between a verified single-side account and an unknown
+        response.
+        """
+        if self.market_type != "swap":
+            return False
+        contract_code = to_htx_contract_code(symbol)
+        if not contract_code:
+            return None
+        key = contract_code.upper()
+        now = time.time()
+        cached = self._pos_mode_cache.get(key)
+        if cached:
+            ts, hedge = cached
+            if (now - float(ts or 0.0)) <= float(self._pos_mode_cache_ttl_sec or 60.0):
+                return bool(hedge)
+        hedge: Optional[bool] = None
+        margin_mode = self._default_margin_mode()
+        for params in (
+            {"contract_code": contract_code, "margin_mode": margin_mode},
+            {"contract_code": contract_code},
+            {"margin_account": "USDT", "margin_mode": margin_mode},
+            {"margin_account": "USDT"},
+        ):
+            if hedge is not None:
+                break
+            try:
+                raw = self._swap_v5_request("GET", "/v5/position/mode", params=params)
+                hedge = htx_v5.parse_position_mode_hedged(htx_v5.v5_data(raw))
+            except Exception as e:
+                logger.debug("HTX V5 position/mode probe %s for %s: %s", params, contract_code, e)
+        if hedge is None:
+            try:
+                pos_raw = self._swap_v5_request(
+                    "GET",
+                    "/v5/trade/position/opens",
+                    params={"contract_code": contract_code},
+                )
+                hedge = htx_v5.parse_position_mode_hedged(htx_v5.v5_data(pos_raw))
+            except Exception as e_pos:
+                logger.debug(
+                    "HTX V5 position/opens probe for %s: %s", contract_code, e_pos
+                )
+        if hedge is None:
+            for json_body in (
+                {"contract_code": contract_code},
+                {"margin_account": "USDT"},
+            ):
+                if hedge is not None:
+                    break
+                try:
+                    raw_v1 = self._swap_private_request_raw(
+                        "POST",
+                        "/linear-swap-api/v1/swap_cross_account_position_info",
+                        json_body=json_body,
+                    )
+                    if str(raw_v1.get("status") or "").lower() != "ok":
+                        continue
+                    data_v1 = raw_v1.get("data")
+                    if isinstance(data_v1, list) and data_v1:
+                        hedge = htx_v5.parse_position_mode_hedged(data_v1[0])
+                    elif isinstance(data_v1, dict):
+                        hedge = htx_v5.parse_position_mode_hedged(data_v1)
+                        if hedge is None:
+                            positions = data_v1.get("positions")
+                            if isinstance(positions, list) and positions:
+                                hedge = htx_v5.parse_position_mode_hedged(positions[0])
+                except Exception as e2:
+                    logger.debug(
+                        "HTX V1 position_mode probe %s for %s: %s", json_body, contract_code, e2
+                    )
+        if hedge is None:
+            logger.warning("HTX position mode unknown for %s", contract_code)
+            return None
+        logger.info(
+            "HTX position mode for %s: %s",
+            contract_code,
+            "dual_side" if hedge else "single_side",
+        )
+        self._pos_mode_cache[key] = (now, bool(hedge))
+        return bool(hedge)
+
+    def get_swap_hedge_mode(self, *, symbol: str) -> bool:
+        """Order-routing compatibility wrapper; unknown mode uses one-way first."""
+        detected = self.detect_swap_hedge_mode(symbol=symbol)
+        return bool(detected) if detected is not None else False
 
     def _get_spot_account_id(self) -> str:
         if self._spot_account_id:
@@ -398,9 +538,9 @@ class HtxClient(BaseRestClient):
             contract_size = Decimal("1")
         contracts = req / contract_size
         val = self._floor_to_int(contracts)
-        return val if val > 0 else 1
+        return val if val > 0 else 0
 
-    def set_leverage(self, *, symbol: str, leverage: float) -> bool:
+    def set_leverage(self, *, symbol: str, leverage: float, margin_mode: str = "") -> bool:
         if self.market_type == "spot":
             return False
         contract_code = to_htx_contract_code(symbol)
@@ -410,14 +550,68 @@ class HtxClient(BaseRestClient):
             lv = 1
         if lv < 1:
             lv = 1
+        try:
+            contract = self.get_contract_info(symbol=symbol) or {}
+        except Exception:
+            contract = {}
+        max_raw = (
+            contract.get("max_leverage")
+            or contract.get("maxLever")
+            or contract.get("max_lever_rate")
+        )
+        try:
+            max_leverage = int(float(max_raw or 0))
+        except (TypeError, ValueError):
+            max_leverage = 0
+        if max_leverage > 0 and lv > max_leverage:
+            raise LiveTradingError(
+                f"HTX leverage {lv}x exceeds the current {contract_code} maximum {max_leverage}x"
+            )
+        mode = str(margin_mode or self._default_margin_mode()).strip().lower()
+        if mode not in ("cross", "isolated"):
+            return False
+        self.margin_mode = mode
         body = htx_v5.build_lever_body(
             contract_code=contract_code,
             lever_rate=lv,
-            margin_mode=self._default_margin_mode(),
+            margin_mode=mode,
         )
-        self._swap_v5_request("POST", "/v5/position/lever", json_body=body)
+        response = self._swap_v5_request(
+            "POST", "/v5/position/lever", json_body=body
+        )
+        data = response.get("data") if isinstance(response, dict) else None
+        if isinstance(data, dict):
+            effective_raw = data.get("lever_rate") or data.get("leverRate")
+            if effective_raw not in (None, ""):
+                try:
+                    effective = int(float(effective_raw))
+                except (TypeError, ValueError) as exc:
+                    raise LiveTradingError(
+                        f"HTX returned an invalid effective leverage: {effective_raw}"
+                    ) from exc
+                if effective != lv:
+                    raise LiveTradingError(
+                        f"HTX applied {effective}x instead of requested {lv}x leverage"
+                    )
         self._lever_cache[contract_code] = lv
         return True
+
+    def _place_swap_order_v1(self, body: Dict[str, Any]) -> LiveOrderResult:
+        endpoint = (
+            "/linear-swap-api/v1/swap_order"
+            if self._default_margin_mode() == "isolated"
+            else "/linear-swap-api/v1/swap_cross_order"
+        )
+        raw = self._swap_private_request_raw("POST", endpoint, json_body=body)
+        if str(raw.get("status") or "").lower() != "ok":
+            err = raw.get("err_msg") or raw.get("err_code") or raw
+            raise LiveTradingError(f"HTX swap_cross_order: {err}")
+        data = raw.get("data") or {}
+        if not isinstance(data, dict):
+            data = {}
+        oid = str(data.get("order_id_str") or data.get("order_id") or "")
+        logger.info("HTX V1 cross order placed order_id=%s", oid)
+        return LiveOrderResult(exchange_id="htx", exchange_order_id=oid, filled=0.0, avg_price=0.0, raw=raw)
 
     def _place_swap_order(self, body: Dict[str, Any]) -> LiveOrderResult:
         req = dict(body)
@@ -428,6 +622,159 @@ class HtxClient(BaseRestClient):
         oid = str(data.get("order_id_str") or data.get("order_id") or "")
         logger.info("HTX V5 order placed order_id=%s", oid)
         return LiveOrderResult(exchange_id="htx", exchange_order_id=oid, filled=0.0, avg_price=0.0, raw=raw)
+
+    @staticmethod
+    def _is_position_mode_param_error(err: Exception) -> bool:
+        text = str(err or "").lower()
+        return "position mode" in text and ("parameter" in text or "passing" in text)
+
+    @staticmethod
+    def _is_illegal_parameter_type_error(err: Exception) -> bool:
+        text = str(err or "").lower()
+        return "illegal parameter type" in text or "invalid-type" in text
+
+    def _place_swap_order_with_mode_fallback(
+        self,
+        *,
+        symbol: str,
+        contract_code: str,
+        body: Dict[str, Any],
+        pos_side: str = "",
+    ) -> LiveOrderResult:
+        reduce_only = body.get("reduce_only") in (1, "1", True) or str(
+            body.get("offset") or ""
+        ).lower() == "close"
+        side = str(body.get("side") or body.get("direction") or "buy")
+        lever_rate = int(body.get("lever_rate") or 5)
+        has_price = body.get("price") is not None
+        order_price_type = "limit" if has_price else "opponent"
+        price = float(body["price"]) if has_price else None
+        client_order_id = body.get("client_order_id")
+        channel_code = self.broker_id
+        volume = int(body.get("volume") or 0)
+        preferred = self.get_swap_hedge_mode(symbol=symbol)
+
+        v1_candidates = htx_v5.v1_order_body_variants(
+            contract_code=str(body.get("contract_code") or contract_code),
+            volume=volume,
+            side=side,
+            lever_rate=lever_rate,
+            order_price_type=order_price_type,
+            price=price,
+            client_order_id=client_order_id,
+            channel_code=channel_code,
+            reduce_only=reduce_only,
+            preferred_hedge=preferred,
+        )
+        margin_mode = str(body.get("margin_mode") or self._default_margin_mode())
+        v5_common = dict(
+            contract_code=str(body.get("contract_code") or contract_code),
+            volume=volume,
+            side=side,
+            order_price_type=order_price_type,
+            price=price,
+            client_order_id=client_order_id,
+            channel_code=channel_code,
+            margin_mode=margin_mode,
+            reduce_only=reduce_only,
+            pos_side=pos_side,
+        )
+
+        asset_mode = self._fetch_v5_asset_mode()
+        skip_v1 = asset_mode == 1
+        last_err: Optional[Exception] = None
+        tried_v1 = False
+        if not skip_v1:
+            for req in v1_candidates:
+                tried_v1 = True
+                try:
+                    hedge = str(req.get("offset") or "").lower() in ("open", "close")
+                    self._pos_mode_cache[contract_code.upper()] = (time.time(), hedge)
+                    return self._place_swap_order_v1(req)
+                except LiveTradingError as e:
+                    last_err = e
+                    if htx_v5.is_multi_asset_v1_unavailable(str(e)):
+                        skip_v1 = True
+                        logger.info(
+                            "HTX account is multi-asset collateral (asset_mode=%s); skipping V1 orders",
+                            asset_mode,
+                        )
+                        break
+                    logger.warning("HTX V1 order attempt failed for %s: %s", contract_code, e)
+        else:
+            logger.debug(
+                "HTX V1 swap_cross_order skipped for %s (asset_mode=1 multi-asset)",
+                contract_code,
+            )
+
+        if tried_v1 and not skip_v1:
+            logger.info("HTX V1 swap_cross_order failed for %s; falling back to V5", contract_code)
+
+        v5_mode = preferred
+        logger.info(
+            "HTX V5 multi-asset order for %s: position_mode=%s pos_side_hint=%s reduce_only=%s",
+            contract_code,
+            "dual_side" if v5_mode else "single_side",
+            pos_side or "(auto)",
+            reduce_only,
+        )
+        v5_candidates = htx_v5.swap_order_body_variants(
+            preferred_hedge=v5_mode, **v5_common
+        )
+        idx = 0
+        while idx < len(v5_candidates):
+            req = v5_candidates[idx]
+            try:
+                hedge = req.get("position_side") in ("long", "short")
+                self._pos_mode_cache[contract_code.upper()] = (time.time(), hedge)
+                return self._place_swap_order(req)
+            except LiveTradingError as e:
+                last_err = e
+                err_text = str(e)
+                if self._is_illegal_parameter_type_error(e):
+                    logger.warning(
+                        "HTX V5 illegal type for %s (type=%s position_side=%s); trying next",
+                        contract_code,
+                        req.get("type"),
+                        req.get("position_side"),
+                    )
+                    idx += 1
+                    continue
+                if htx_v5.is_oneway_order_rejected_on_hedge(err_text) and v5_mode:
+                    logger.warning(
+                        "HTX V5 hedge params rejected on %s (likely single_side); retry one-way",
+                        contract_code,
+                    )
+                    v5_mode = False
+                    v5_candidates = htx_v5.swap_order_body_variants(
+                        oneway_only=True, **v5_common
+                    )
+                    idx = 0
+                    continue
+                if htx_v5.is_hedge_order_rejected_on_oneway(err_text) and not v5_mode:
+                    logger.warning(
+                        "HTX V5 one-way params rejected on %s (likely dual_side); retry hedge",
+                        contract_code,
+                    )
+                    v5_mode = True
+                    v5_candidates = htx_v5.swap_order_body_variants(
+                        hedge_only=True, **v5_common
+                    )
+                    idx = 0
+                    continue
+                if not self._is_position_mode_param_error(e):
+                    raise
+                logger.warning(
+                    "HTX V5 position-mode mismatch for %s (type=%s position_side=%s reduce_only=%s); trying next",
+                    contract_code,
+                    req.get("type"),
+                    req.get("position_side"),
+                    req.get("reduce_only"),
+                )
+                idx += 1
+        if last_err:
+            raise last_err
+        raise LiveTradingError("HTX order failed after V1 and V5 retries")
 
     def place_market_order(
         self,
@@ -459,7 +806,7 @@ class HtxClient(BaseRestClient):
                 "symbol": to_htx_spot_symbol(symbol),
                 "type": order_type,
                 "amount": f"{amount:.12f}".rstrip("0").rstrip("."),
-                "source": "spot-api",
+                "source": self.spot_source,
             }
             formatted_client_order_id = self._format_spot_client_order_id(client_order_id)
             if formatted_client_order_id:
@@ -476,20 +823,26 @@ class HtxClient(BaseRestClient):
         sd = str(side or "").strip().lower()
         if sd not in ("buy", "sell"):
             raise LiveTradingError(f"Invalid side: {side}")
-        body: Dict[str, Any] = {
-            "contract_code": contract_code,
-            "volume": volume,
-            "direction": sd,
-            "offset": "close" if reduce_only else "open",
-            "lever_rate": int(self._lever_cache.get(contract_code) or 5),
-            "order_price_type": "opponent",
-        }
-        if self.broker_id:
-            body["channel_code"] = self.broker_id
+        hedge_mode = self.get_swap_hedge_mode(symbol=symbol)
+        ps = htx_v5.resolve_v5_position_side(
+            side=sd, reduce_only=reduce_only, hedge_mode=hedge_mode, pos_side=pos_side
+        )
+        body = htx_v5.build_swap_order_body(
+            contract_code=contract_code,
+            volume=volume,
+            side=sd,
+            order_price_type="opponent",
+            channel_code=self.broker_id or "",
+            margin_mode=self._default_margin_mode(),
+            reduce_only=reduce_only,
+            position_side=ps,
+        )
         swap_coid = self._format_swap_client_order_id(client_order_id)
         if swap_coid is not None:
             body["client_order_id"] = swap_coid
-        return self._place_swap_order(body)
+        return self._place_swap_order_with_mode_fallback(
+            symbol=symbol, contract_code=contract_code, body=body, pos_side=pos_side
+        )
 
     def place_limit_order(
         self,
@@ -518,7 +871,7 @@ class HtxClient(BaseRestClient):
                 "type": f"{sd}-limit",
                 "amount": f"{qty:.12f}".rstrip("0").rstrip("."),
                 "price": f"{px:.12f}".rstrip("0").rstrip("."),
-                "source": "spot-api",
+                "source": self.spot_source,
             }
             formatted_client_order_id = self._format_spot_client_order_id(client_order_id)
             if formatted_client_order_id:
@@ -530,21 +883,27 @@ class HtxClient(BaseRestClient):
 
         contract_code = to_htx_contract_code(symbol)
         volume = self._base_to_contracts(symbol=symbol, qty=qty)
-        body = {
-            "contract_code": contract_code,
-            "volume": volume,
-            "direction": sd,
-            "offset": "close" if reduce_only else "open",
-            "lever_rate": int(self._lever_cache.get(contract_code) or 5),
-            "price": px,
-            "order_price_type": "limit",
-        }
-        if self.broker_id:
-            body["channel_code"] = self.broker_id
+        hedge_mode = self.get_swap_hedge_mode(symbol=symbol)
+        ps = htx_v5.resolve_v5_position_side(
+            side=sd, reduce_only=reduce_only, hedge_mode=hedge_mode, pos_side=pos_side
+        )
+        body = htx_v5.build_swap_order_body(
+            contract_code=contract_code,
+            volume=volume,
+            side=sd,
+            order_price_type="limit",
+            price=px,
+            channel_code=self.broker_id or "",
+            margin_mode=self._default_margin_mode(),
+            reduce_only=reduce_only,
+            position_side=ps,
+        )
         swap_coid = self._format_swap_client_order_id(client_order_id)
         if swap_coid is not None:
             body["client_order_id"] = swap_coid
-        return self._place_swap_order(body)
+        return self._place_swap_order_with_mode_fallback(
+            symbol=symbol, contract_code=contract_code, body=body, pos_side=pos_side
+        )
 
     def cancel_order(self, *, symbol: str, order_id: str = "", client_order_id: str = "") -> Dict[str, Any]:
         if self.market_type == "spot":
@@ -594,6 +953,115 @@ class HtxClient(BaseRestClient):
             raw = self._swap_v5_request("GET", "/v5/trade/order/details", params=params)
         return htx_v5.normalize_order_detail(raw)
 
+    def get_order_match_results(
+        self,
+        *,
+        symbol: str,
+        order_id: str = "",
+        client_order_id: str = "",
+    ) -> Dict[str, Any]:
+        """Fetch the exchange's per-match records used for authoritative fees."""
+        if self.market_type == "spot":
+            if not order_id:
+                raise LiveTradingError("HTX spot match results require order_id")
+            return self._spot_private_request(
+                "GET",
+                f"/v1/order/orders/{str(order_id)}/matchresults",
+            )
+        params = htx_v5.build_order_query_params(
+            contract_code=to_htx_contract_code(symbol),
+            order_id=order_id,
+            client_order_id=client_order_id,
+        )
+        try:
+            return self._swap_v5_request(
+                "GET",
+                "/v5/trade/order/details",
+                params=params,
+            )
+        except LiveTradingError as exc:
+            if not order_id:
+                raise
+            endpoint = (
+                "/linear-swap-api/v1/swap_order_detail"
+                if self.margin_mode == "isolated"
+                else "/linear-swap-api/v1/swap_cross_order_detail"
+            )
+            logger.info(
+                "HTX V5 order details unavailable; using %s for order=%s: %s",
+                endpoint,
+                order_id,
+                exc,
+            )
+            return self._swap_private_request_raw(
+                "POST",
+                endpoint,
+                json_body={
+                    "contract_code": to_htx_contract_code(symbol),
+                    "order_id": str(order_id),
+                },
+            )
+
+    @staticmethod
+    def _match_fee_breakdown(raw: Dict[str, Any], *, default_ccy: str = "") -> Dict[str, float]:
+        data: Any = raw.get("data") if isinstance(raw, dict) else None
+        if data is None:
+            data = htx_v5.v5_data(raw) if isinstance(raw, dict) else None
+
+        def _fee_rows(value: Any) -> List[Dict[str, Any]]:
+            if isinstance(value, list):
+                rows: List[Dict[str, Any]] = []
+                for item in value:
+                    rows.extend(_fee_rows(item))
+                return rows
+            if not isinstance(value, dict):
+                return []
+            nested_rows: List[Dict[str, Any]] = []
+            for key in ("trades", "trade", "fills", "fill_list", "match_results", "details"):
+                nested = value.get(key)
+                if isinstance(nested, (list, dict)):
+                    nested_rows.extend(_fee_rows(nested))
+            # Prefer per-match rows over an order-level aggregate to avoid double-counting.
+            return nested_rows or [value]
+
+        rows = _fee_rows(data)
+
+        fees: Dict[str, float] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            fee_value = (
+                row.get("filled-fees")
+                or row.get("trade_fee")
+                or row.get("tradeFee")
+                or row.get("fee")
+                or 0.0
+            )
+            fee_currency = (
+                row.get("fee-currency")
+                or row.get("fee_asset")
+                or row.get("feeAsset")
+                or row.get("fee_currency")
+                or default_ccy
+            )
+            try:
+                fee = abs(float(fee_value or 0.0))
+            except (TypeError, ValueError):
+                fee = 0.0
+            if fee <= 0:
+                # HTX spot may deduct points or HT instead of the received asset.
+                try:
+                    fee = abs(float(row.get("filled-points") or 0.0))
+                except (TypeError, ValueError):
+                    fee = 0.0
+                if fee > 0:
+                    fee_currency = row.get("fee-deduct-currency") or "POINT"
+            if fee <= 0:
+                continue
+            key = str(fee_currency or "").strip().upper() or "UNKNOWN"
+            fees[key] = fees.get(key, 0.0) + fee
+        return fees
+
     def wait_for_fill(
         self,
         *,
@@ -605,6 +1073,16 @@ class HtxClient(BaseRestClient):
     ) -> Dict[str, Any]:
         end_ts = time.time() + float(max_wait_sec or 0.0)
         last: Dict[str, Any] = {}
+        contract_size = 1.0
+        if self.market_type != "spot":
+            try:
+                info = self.get_contract_info(symbol=str(symbol)) or {}
+                cs = float(info.get("contract_size") or info.get("contractSize") or 0.0)
+                if cs > 0:
+                    contract_size = cs
+            except Exception:
+                contract_size = 1.0
+
         while True:
             timed_out = time.time() >= end_ts
             try:
@@ -618,16 +1096,31 @@ class HtxClient(BaseRestClient):
             avg_price = 0.0
             fee = 0.0
             fee_ccy = "USDT"
+            fees_by_ccy: Dict[str, float] = {}
             status = str(last.get("status") or last.get("state") or "")
             try:
-                filled = float(
-                    last.get("field-amount")
-                    or last.get("filled_amount")
-                    or last.get("filled_qty")
-                    or last.get("trade_volume")
-                    or last.get("trade_volume_avg")
-                    or 0.0
-                )
+                if self.market_type == "spot":
+                    filled = float(
+                        last.get("field-amount")
+                        or last.get("filled_amount")
+                        or last.get("filled_qty")
+                        or 0.0
+                    )
+                else:
+                    contracts = float(
+                        last.get("trade_volume")
+                        or last.get("tradeVolume")
+                        or 0.0
+                    )
+                    if contracts > 0:
+                        filled = abs(contracts) * contract_size
+                    else:
+                        filled = float(
+                            last.get("field-amount")
+                            or last.get("filled_amount")
+                            or last.get("filled_qty")
+                            or 0.0
+                        )
             except Exception:
                 filled = 0.0
             try:
@@ -642,6 +1135,14 @@ class HtxClient(BaseRestClient):
                         or last.get("price")
                         or 0.0
                     )
+                    if avg_price <= 0 and self.market_type != "spot":
+                        turnover = float(
+                            last.get("trade_turnover")
+                            or last.get("tradeTurnover")
+                            or 0.0
+                        )
+                        if filled > 0 and turnover > 0:
+                            avg_price = turnover / filled
             except Exception:
                 avg_price = 0.0
             try:
@@ -649,6 +1150,25 @@ class HtxClient(BaseRestClient):
             except Exception:
                 fee = 0.0
             fee_ccy = str(last.get("fee_asset") or last.get("fee_currency") or fee_ccy or "").strip() or "USDT"
+            if fee > 0:
+                fees_by_ccy = {fee_ccy.upper(): fee}
+            if filled > 0:
+                try:
+                    match_raw = self.get_order_match_results(
+                        symbol=symbol,
+                        order_id=str(order_id or ""),
+                        client_order_id=str(client_order_id or ""),
+                    )
+                    match_fees = self._match_fee_breakdown(
+                        match_raw,
+                        default_ccy="USDT" if self.market_type != "spot" else "",
+                    )
+                    if match_fees:
+                        fees_by_ccy = match_fees
+                        fee = sum(match_fees.values())
+                        fee_ccy = next(iter(match_fees)) if len(match_fees) == 1 else "MIXED"
+                except Exception as exc:
+                    logger.debug("HTX match fee query failed for order %s: %s", order_id, exc)
 
             if filled > 0 and avg_price > 0:
                 if fee <= 0 and not timed_out:
@@ -659,6 +1179,7 @@ class HtxClient(BaseRestClient):
                     "avg_price": avg_price,
                     "fee": fee,
                     "fee_ccy": fee_ccy,
+                    "fees_by_ccy": fees_by_ccy,
                     "status": status,
                     "order": last,
                 }
@@ -673,6 +1194,7 @@ class HtxClient(BaseRestClient):
                     "avg_price": avg_price,
                     "fee": fee,
                     "fee_ccy": fee_ccy,
+                    "fees_by_ccy": fees_by_ccy,
                     "status": status,
                     "order": last,
                 }
@@ -682,6 +1204,7 @@ class HtxClient(BaseRestClient):
                     "avg_price": avg_price,
                     "fee": fee,
                     "fee_ccy": fee_ccy,
+                    "fees_by_ccy": fees_by_ccy,
                     "status": status,
                     "order": last,
                 }

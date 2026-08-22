@@ -22,10 +22,8 @@ Endpoints:
 
 from __future__ import annotations
 
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from flask import Blueprint, jsonify, request
+from flask import jsonify, request
+from app.openapi.blueprint import HumanBlueprint as Blueprint
 
 from app.utils.logger import get_logger
 from app.utils.auth import login_required
@@ -43,78 +41,31 @@ from app.utils.auth import login_required
 #
 # These three together are what stops the "open AI asset analysis page,
 # wait 2s on yfinance" experience.
-from app.data_providers import (
-    cached_or_compute, set_cached, clear_cache, invalidate,
-)
-from app.data_providers.crypto import fetch_crypto_prices
-from app.data_providers.forex import fetch_forex_pairs
-from app.data_providers.commodities import fetch_commodities
-from app.data_providers.indices import fetch_stock_indices
-from app.data_providers.sentiment import (
-    fetch_fear_greed_index, fetch_vix, fetch_dollar_index,
-    fetch_yield_curve, fetch_vxn, fetch_gvz, fetch_put_call_ratio,
-)
+from app.data_providers import cached_or_compute, clear_cache, invalidate
 from app.data_providers.adanos_sentiment import fetch_adanos_market_sentiment
-from app.data_providers.news import fetch_financial_news, get_economic_calendar
+from app.data_providers.news import fetch_financial_news, get_economic_calendar_payload
 from app.data_providers.heatmap import generate_heatmap_data
-from app.data_providers.opportunities import (
-    analyze_opportunities_crypto, analyze_opportunities_stocks,
-    analyze_opportunities_local_stocks, analyze_opportunities_forex,
+from app.services.global_market_data import (
+    compute_market_overview,
+    compute_market_sentiment,
+    compute_trading_opportunities,
 )
 
 logger = get_logger(__name__)
 
-global_market_bp = Blueprint("global_market", __name__)
+global_market_blp = Blueprint("global_market", __name__)
 
 
 # ============ API Endpoints ============
 
-def _compute_market_overview():
-    """Fan-out four upstream pulls in parallel; never raise — return empty
-    lists on failure so the route always returns 200."""
-    result = {
-        "indices": [], "forex": [], "crypto": [], "commodities": [],
-        "timestamp": int(time.time()),
-    }
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {
-            executor.submit(fetch_stock_indices): "indices",
-            executor.submit(fetch_forex_pairs): "forex",
-            executor.submit(fetch_crypto_prices): "crypto",
-            executor.submit(fetch_commodities): "commodities",
-        }
-        for future in as_completed(futures):
-            key = futures[future]
-            try:
-                data = future.result()
-                result[key] = data if data else []
-            except Exception as e:
-                logger.error("Failed to fetch %s: %s", key, e, exc_info=True)
-                result[key] = []
-
-    logger.info(
-        "Market overview compute: indices=%d, forex=%d, crypto=%d, commodities=%d",
-        len(result["indices"]), len(result["forex"]),
-        len(result["crypto"]), len(result["commodities"]),
-    )
-
-    # Also seed the per-section caches so any standalone endpoint that
-    # reads them (e.g. a future /api/global-market/indices) benefits from
-    # the same fetch.
-    set_cached("stock_indices", result["indices"])
-    set_cached("forex_pairs", result["forex"])
-    set_cached("crypto_prices", result["crypto"])
-    return result
-
-
-@global_market_bp.route("/overview", methods=["GET"])
+@global_market_blp.route("/overview", methods=["GET"])
 @login_required
 def market_overview():
     """Get global market overview including indices, forex, crypto, and commodities."""
     try:
         force = request.args.get("force", "").lower() in ("true", "1")
         data = cached_or_compute(
-            "market_overview", _compute_market_overview, force=force
+            "market_overview", compute_market_overview, force=force
         )
         return jsonify({"code": 1, "msg": "success", "data": data})
     except Exception as e:
@@ -122,14 +73,14 @@ def market_overview():
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
-@global_market_bp.route("/heatmap", methods=["GET"])
+@global_market_blp.route("/heatmap", methods=["GET"])
 @login_required
 def market_heatmap():
     """Get market heatmap data for crypto, stock sectors, forex, and indices."""
     try:
         force = request.args.get("force", "").lower() in ("true", "1")
         data = cached_or_compute(
-            "market_heatmap", generate_heatmap_data, force=force
+            "market_heatmap_v4", generate_heatmap_data, force=force
         )
         return jsonify({"code": 1, "msg": "success", "data": data})
     except Exception as e:
@@ -137,7 +88,7 @@ def market_heatmap():
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
-@global_market_bp.route("/news", methods=["GET"])
+@global_market_blp.route("/news", methods=["GET"])
 @login_required
 def market_news():
     """Get financial news from various sources.  Query params: lang ('cn'|'en'|'all')."""
@@ -157,73 +108,46 @@ def market_news():
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
-@global_market_bp.route("/calendar", methods=["GET"])
+@global_market_blp.route("/calendar", methods=["GET"])
 @login_required
 def economic_calendar():
     """Get economic calendar events with impact indicators."""
     try:
         force = request.args.get("force", "").lower() in ("true", "1")
-        data = cached_or_compute(
-            "economic_calendar", get_economic_calendar, force=force
+        payload = cached_or_compute(
+            "economic_calendar_v3", get_economic_calendar_payload, force=force
         )
-        return jsonify({"code": 1, "msg": "success", "data": data})
+        if isinstance(payload, list):
+            data = payload
+            meta = {"status": "ok", "source": "legacy"}
+        elif isinstance(payload, dict):
+            data = payload.get("events") if isinstance(payload.get("events"), list) else []
+            meta = {
+                "status": payload.get("status") or "ok",
+                "source": payload.get("source") or "free_calendar_sources",
+                "config_key": payload.get("config_key") or "",
+                "message": payload.get("message") or "",
+                "fallback_from": payload.get("fallback_from") or "",
+                "fallback_reason": payload.get("fallback_reason") or "",
+                "insight_version": "macro_event_context_v1",
+            }
+        else:
+            data = []
+            meta = {"status": "error", "source": "free_calendar_sources", "message": "Calendar payload is unavailable."}
+        return jsonify({"code": 1, "msg": "success", "data": data, "meta": meta})
     except Exception as e:
         logger.error("economic_calendar failed: %s", e, exc_info=True)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
-def _compute_market_sentiment():
-    """Fan-out 7 macro sentiment indicators in parallel.
-
-    None-safe: any sub-fetcher that fails contributes a None which we
-    backfill with neutral defaults so the UI never sees missing fields.
-    """
-    with ThreadPoolExecutor(max_workers=7) as executor:
-        futures = {
-            executor.submit(fetch_fear_greed_index): "fear_greed",
-            executor.submit(fetch_vix): "vix",
-            executor.submit(fetch_dollar_index): "dxy",
-            executor.submit(fetch_yield_curve): "yield_curve",
-            executor.submit(fetch_vxn): "vxn",
-            executor.submit(fetch_gvz): "gvz",
-            executor.submit(fetch_put_call_ratio): "vix_term",
-        }
-        results = {}
-        for future in as_completed(futures):
-            key = futures[future]
-            try:
-                results[key] = future.result()
-            except Exception as e:
-                logger.error("Failed to fetch %s: %s", key, e)
-                results[key] = None
-
-    logger.info(
-        "Sentiment compute: Fear&Greed=%s, VIX=%s, DXY=%s",
-        (results.get("fear_greed") or {}).get("value"),
-        (results.get("vix") or {}).get("value"),
-        (results.get("dxy") or {}).get("value"),
-    )
-
-    return {
-        "fear_greed": results.get("fear_greed") or {"value": 50, "classification": "Neutral"},
-        "vix":         results.get("vix")         or {"value": 0,   "level": "unknown"},
-        "dxy":         results.get("dxy")         or {"value": 0,   "level": "unknown"},
-        "yield_curve": results.get("yield_curve") or {"spread": 0,  "level": "unknown"},
-        "vxn":         results.get("vxn")         or {"value": 0,   "level": "unknown"},
-        "gvz":         results.get("gvz")         or {"value": 0,   "level": "unknown"},
-        "vix_term":    results.get("vix_term")    or {"value": 1.0, "level": "unknown"},
-        "timestamp": int(time.time()),
-    }
-
-
-@global_market_bp.route("/sentiment", methods=["GET"])
+@global_market_blp.route("/sentiment", methods=["GET"])
 @login_required
 def market_sentiment():
     """Get comprehensive market sentiment indicators."""
     try:
         force = request.args.get("force", "").lower() in ("true", "1")
         data = cached_or_compute(
-            "market_sentiment", _compute_market_sentiment, force=force
+            "market_sentiment", compute_market_sentiment, force=force
         )
         return jsonify({"code": 1, "msg": "success", "data": data})
     except Exception as e:
@@ -231,7 +155,7 @@ def market_sentiment():
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
-@global_market_bp.route("/adanos-sentiment", methods=["GET"])
+@global_market_blp.route("/adanos-sentiment", methods=["GET"])
 @login_required
 def adanos_market_sentiment():
     """Get optional Adanos Market Sentiment for selected US stock tickers."""
@@ -263,45 +187,7 @@ def adanos_market_sentiment():
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
-def _compute_trading_opportunities():
-    """Run all market scanners sequentially. Each scanner is resilient and
-    only contributes to the accumulator on success.
-
-    Per-market visibility comes from :func:`app.utils.market_visibility.is_market_visible`
-    so the radar never surfaces a market that the watchlist picker has hidden.
-    Skipping a disabled market also avoids the (slow) upstream price /
-    fundamentals fetches for it, so the cache miss latency drops too.
-    """
-    from app.utils.market_visibility import is_market_visible as _vis
-
-    opportunities: list = []
-    candidate_scanners = [
-        ("Crypto",  lambda: analyze_opportunities_crypto(opportunities)),
-        ("USStock", lambda: analyze_opportunities_stocks(opportunities)),
-        ("Forex",   lambda: analyze_opportunities_forex(opportunities)),
-        ("CNStock", lambda: analyze_opportunities_local_stocks(opportunities, "CNStock")),
-        ("HKStock", lambda: analyze_opportunities_local_stocks(opportunities, "HKStock")),
-    ]
-    scanners = [(label, fn) for label, fn in candidate_scanners if _vis(label)]
-
-    for label, scanner in scanners:
-        try:
-            scanner()
-            count = len([o for o in opportunities if o.get("market") == label])
-            logger.info("Trading opportunities: found %d %s opportunities", count, label)
-        except Exception as e:
-            logger.error("Failed to analyze %s opportunities: %s", label, e, exc_info=True)
-
-    opportunities.sort(key=lambda x: abs(x.get("change_24h", 0)), reverse=True)
-
-    by_market = {}
-    for o in opportunities:
-        by_market[o.get("market", "?")] = by_market.get(o.get("market", "?"), 0) + 1
-    logger.info("Trading opportunities: total %d (%s)", len(opportunities), by_market)
-    return opportunities
-
-
-@global_market_bp.route("/opportunities", methods=["GET"])
+@global_market_blp.route("/opportunities", methods=["GET"])
 @login_required
 def trading_opportunities():
     """Scan for trading opportunities across Crypto, US/CN/HK Stocks, and Forex."""
@@ -309,7 +195,7 @@ def trading_opportunities():
         force = request.args.get("force", "").lower() in ("true", "1")
         data = cached_or_compute(
             "trading_opportunities",
-            _compute_trading_opportunities,
+            compute_trading_opportunities,
             force=force,
         )
 
@@ -328,7 +214,7 @@ def trading_opportunities():
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
-@global_market_bp.route("/refresh", methods=["POST"])
+@global_market_blp.route("/refresh", methods=["POST"])
 @login_required
 def refresh_data():
     """Force refresh all market data (clears cache)."""
@@ -338,3 +224,6 @@ def refresh_data():
     except Exception as e:
         logger.error("refresh_data failed: %s", e, exc_info=True)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
+
+# openapi-compat: legacy import name
+global_market_bp = global_market_blp

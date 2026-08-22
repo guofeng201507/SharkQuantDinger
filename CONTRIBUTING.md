@@ -102,7 +102,7 @@ This repository contains:
 - `backend_api_python/`: Flask backend + strategy runtime
 - `docker-compose.yml` / `docker-compose.ghcr.yml`: deployment stacks
 
-The web UI source lives in the separate private **QuantDinger-Vue** repo, which publishes `ghcr.io/brokermr810/quantdinger-frontend` to GHCR on every `v*` tag — both Compose files pull that image directly.
+The web UI source lives in the separate private **QuantDinger-Vue** repo, which publishes `ghcr.io/openbyteinc/quantdinger-frontend` to GHCR on every `v*` tag — both Compose files pull that image directly.
 
 ### Backend (Python)
 
@@ -115,9 +115,22 @@ python run.py
 
 ### Frontend
 
-The SPA lives in the private **QuantDinger-Vue** repo. Tagging a release there (`git tag vX.Y.Z && git push --tags`) triggers `.github/workflows/release-frontend.yml`, which builds a multi-arch image and pushes it to `ghcr.io/brokermr810/quantdinger-frontend`. No frontend artefacts are committed here — pin the consumed tag via `IMAGE_TAG` (or `FRONTEND_TAG` for a per-side override) in a root-level `.env`.
+The SPA lives in the private **QuantDinger-Vue** repo. Tagging a release there (`git tag vX.Y.Z && git push --tags`) triggers `.github/workflows/release-frontend.yml`, which builds a multi-arch image and pushes it to `ghcr.io/openbyteinc/quantdinger-frontend`. No frontend artefacts are committed here — pin the consumed tag via `IMAGE_TAG` (or `FRONTEND_TAG` for a per-side override) in a root-level `.env`.
 
 For local iteration without publishing, clone the Vue repo into `./QuantDinger-Vue/` (gitignored) and run `docker compose -f docker-compose.yml -f docker-compose.build.yml up --build` — see **DEVELOPMENT.md → Building frontend from local source**.
+
+---
+
+## Code Organization
+
+Read [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md), [`docs/architecture/EXTENSION_GUIDE.md`](docs/architecture/EXTENSION_GUIDE.md), and [`docs/architecture/MODULE_BOUNDARIES.md`](docs/architecture/MODULE_BOUNDARIES.md) before larger backend changes.
+
+- Keep routes thin: validate input, call a service, return JSON.
+- Put exchange, broker, market data, and strategy behavior behind small services or adapters.
+- Avoid growing legacy hotspot files when a focused sibling module can hold new behavior.
+- Keep code comments, docstrings, and log messages in English unless a user-facing translation or external provider field requires another language.
+- Prefer simple, readable code over clever abstractions.
+- Ask for clarification before changing unclear product behavior.
 
 ---
 
@@ -151,6 +164,27 @@ We do not enforce a single test command yet. Please at least:
 - **Frontend**: run the dev server and verify affected pages/components
 
 Bug fixes should include a minimal regression test when practical.
+
+---
+
+## API documentation
+
+QuantDinger uses **OpenAPI 3** as the HTTP contract SSOT.
+
+| Surface | Spec | When to update |
+|---------|------|----------------|
+| Human Web API | [`docs/api/openapi.yaml`](docs/api/openapi.yaml) | Any flask-smorest route in `app/openapi/` |
+| Agent Gateway | [`docs/agent/agent-openapi.json`](docs/agent/agent-openapi.json) | Any `/api/agent/v1` route |
+
+**Regenerate human spec:**
+
+```bash
+cd backend_api_python
+python scripts/export_openapi.py
+```
+
+Read [`docs/architecture/API_CONVENTIONS.md`](docs/architecture/API_CONVENTIONS.md) before adding Public endpoints.
+CI (`.github/workflows/openapi-ci.yml`) runs Spectral lint, export diff, and oasdiff breaking checks.
 
 ---
 

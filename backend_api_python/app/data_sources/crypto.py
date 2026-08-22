@@ -1,9 +1,12 @@
 """
 加密货币数据源
-使用 CCXT (Coinbase) 获取数据
+使用 CCXT 获取数据
 """
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta, timezone
+import os
+import threading
+import time
 import ccxt
 
 from app.data_sources.base import BaseDataSource, TIMEFRAME_SECONDS
@@ -14,17 +17,56 @@ logger = get_logger(__name__)
 
 # Live-trading scoped instances: one CCXT client per (exchange, spot|swap).
 _SCOPED_INSTANCES: Dict[str, "CryptoDataSource"] = {}
+_PUBLIC_MARKET_INSTANCES: Dict[str, "CryptoDataSource"] = {}
+_INVALID_SYMBOL_UNTIL: Dict[str, float] = {}
+PUBLIC_KLINE_EXCHANGE_IDS = ("binance", "bitget", "bybit", "okx", "gate", "htx")
+PUBLIC_KLINE_FALLBACK_IDS = ("bitget", "okx", "gate", "htx", "bybit", "binance")
+
+
+class _PublicKlineUnavailable(RuntimeError):
+    """Signal an empty provider result so an unscoped source can fail over."""
+
+
+def apply_public_ccxt_endpoint_config(config: Dict[str, Any], exchange_id: str) -> Dict[str, Any]:
+    """Apply current public REST endpoints without mutating the caller config."""
+    resolved = dict(config or {})
+    if (exchange_id or "").strip().lower() == "okx":
+        resolved["hostname"] = (os.getenv("OKX_API_HOST") or "openapi.okx.com").strip()
+    return resolved
+
+
+def _invalid_symbol_ttl_sec() -> float:
+    return 300.0
+
+
+def _is_symbol_not_found_error(exc: Any) -> bool:
+    text = str(exc or "").lower()
+    return any(
+        token in text
+        for token in (
+            "does not have market symbol",
+            "symbol not found",
+            "invalid symbol",
+            "market does not exist",
+            "trading pair not found",
+        )
+    )
 
 
 def resolve_ccxt_for_live_trading(exchange_id: str, market_type: str) -> Tuple[str, Dict[str, Any]]:
     """Map QuantDinger exchange_id + market_type to a CCXT class id and options.
 
-    Used for **public** OHLCV/ticker only (no API keys). Keeps chart/backtest on
-    ``CCXTConfig.DEFAULT_EXCHANGE`` while running crypto strategies (signal/live)
-    use the same venue as the strategy's configured exchange.
+    Used for public OHLCV/ticker only (no API keys). Chart, backtest, signals,
+    and live strategies can therefore resolve the same venue and product type.
     """
     e = (exchange_id or "").strip().lower()
-    mt = (market_type or "swap").strip().lower()
+    if not e:
+        e = (CCXTConfig.DEFAULT_EXCHANGE or "binance").strip().lower()
+    if e == "huobi":
+        e = "htx"
+    if e not in PUBLIC_KLINE_EXCHANGE_IDS:
+        raise ValueError(f"Unsupported crypto exchange: {e}")
+    mt = (market_type or "spot").strip().lower()
     if mt in ("futures", "future", "perp", "perpetual"):
         mt = "swap"
 
@@ -41,20 +83,46 @@ def resolve_ccxt_for_live_trading(exchange_id: str, market_type: str) -> Tuple[s
         opts["defaultType"] = "swap" if mt == "swap" else "spot"
     elif e == "gate":
         opts["defaultType"] = "swap" if mt == "swap" else "spot"
-    elif e == "kucoin":
-        ccxt_id = "kucoinfutures" if mt == "swap" else "kucoin"
-    elif e == "kraken":
-        ccxt_id = "krakenfutures" if mt == "swap" else "kraken"
-    elif e == "deepcoin":
-        opts["defaultType"] = "swap" if mt == "swap" else "spot"
     elif e == "htx" or e == "huobi":
         ccxt_id = "htx"
         opts["defaultType"] = "swap" if mt == "swap" else "spot"
-    elif e == "coinbase":
-        ccxt_id = "coinbase"
     # unknown id: pass through and let ccxt raise if unsupported
 
     return ccxt_id, opts
+
+
+def resolve_crypto_venue(
+    *,
+    exchange_config: Optional[Dict[str, Any]] = None,
+    trading_config: Optional[Dict[str, Any]] = None,
+    market_type: Optional[str] = None,
+) -> Tuple[str, str]:
+    """Resolve (exchange_id, spot|swap) for public crypto OHLCV/ticker."""
+    cfg = exchange_config or {}
+    tc = trading_config or {}
+    ex = (
+        cfg.get("exchange_id")
+        or cfg.get("exchange")
+        or cfg.get("exchangeId")
+        or tc.get("exchange_id")
+        or tc.get("exchange")
+        or tc.get("exchangeId")
+        or ""
+    )
+    ex = str(ex).strip().lower()
+    if not ex:
+        ex = (CCXTConfig.DEFAULT_EXCHANGE or "binance").strip().lower()
+    if ex == "huobi":
+        ex = "htx"
+    if ex not in PUBLIC_KLINE_EXCHANGE_IDS:
+        ex = "binance"
+
+    mt = str(market_type or tc.get("market_type") or "spot").strip().lower()
+    if mt in ("futures", "future", "perp", "perpetual"):
+        mt = "swap"
+    if mt not in ("spot", "swap"):
+        mt = "spot"
+    return ex, mt
 
 
 class CryptoDataSource(BaseDataSource):
@@ -62,29 +130,35 @@ class CryptoDataSource(BaseDataSource):
     
     name = "Crypto/CCXT"
     
-    # 时间周期映射
     TIMEFRAME_MAP = CCXTConfig.TIMEFRAME_MAP
 
-    # 当某个交易所原生不支持某个CCXT周期时，从更细的granularity拉数据后聚合。
-    # 例如Coinbase Advanced Trade只暴露1m/5m/15m/30m/1h/2h/6h/1d，没有3m/4h/1w，
-    # 这里给出每个缺失目标对应的"源周期 + 倍数"候选（按优先顺序）。
     _RESAMPLE_CANDIDATES: Dict[str, List[Tuple[str, int]]] = {
         '3m': [('1m', 3)],
         '4h': [('2h', 2), ('1h', 4)],
         '1w': [('1d', 7)],
     }
 
-    # CCXT单次fetch_ohlcv请求上限（Coinbase REST是300，多数交易所也在300附近）。
-    # 聚合路径fetch源数据时按这个值兜底，避免请求被服务端截断。
     _SINGLE_FETCH_HARD_CAP = 300
 
-    # 常见的报价货币列表（按优先级排序）
+    _RECENT_CANDLE_LIMITS: Dict[str, int] = {
+        "gate": 10000,
+    }
+
     COMMON_QUOTES = ['USDT', 'USD', 'BTC', 'ETH', 'BUSD', 'USDC', 'BNB', 'EUR', 'GBP']
     
     def __init__(self):
+        # Unscoped chart/backtest data may fail over between public providers.
+        # A live-venue scoped source must always remain on its requested venue.
+        self._allow_public_fallback = True
         self._scoped_exchange_id = ""
         self._scoped_market_type = "spot"
+        self._preferred_public_exchange_id = ""
+        self._markets_load_lock = threading.Lock()
         default_ex = (CCXTConfig.DEFAULT_EXCHANGE or "binance").strip().lower()
+        if default_ex == "huobi":
+            default_ex = "htx"
+        if default_ex not in PUBLIC_KLINE_EXCHANGE_IDS:
+            default_ex = "binance"
         self._init_ccxt_exchange(default_ex, {})
 
     @classmethod
@@ -99,8 +173,11 @@ class CryptoDataSource(BaseDataSource):
         if cached is not None:
             return cached
         inst = object.__new__(cls)
+        inst._allow_public_fallback = False
         inst._scoped_exchange_id = (exchange_id or "").strip().lower()
         inst._scoped_market_type = mt
+        inst._preferred_public_exchange_id = ""
+        inst._markets_load_lock = threading.Lock()
         inst._init_ccxt_exchange(ccxt_id, options)
         _SCOPED_INSTANCES[cache_key] = inst
         logger.info(
@@ -110,6 +187,48 @@ class CryptoDataSource(BaseDataSource):
             ccxt_id,
             options,
         )
+        return inst
+
+    @classmethod
+    def for_public_market(
+        cls,
+        market_type: str = "spot",
+        preferred_exchange_id: str = "",
+    ) -> "CryptoDataSource":
+        """Return an uncredentialed source that may fail over across public venues.
+
+        Backtests still need the requested product type (spot versus perpetual),
+        but must not become unavailable merely because the default public venue is
+        blocked or temporarily down.  Live-trading callers continue to use
+        :meth:`for_exchange`, which intentionally never crosses venues.
+        """
+        mt = (market_type or "spot").strip().lower()
+        if mt in ("futures", "future", "perp", "perpetual"):
+            mt = "swap"
+        if mt not in ("spot", "swap"):
+            mt = "spot"
+        exchange_id = (
+            preferred_exchange_id
+            or CCXTConfig.DEFAULT_EXCHANGE
+            or "binance"
+        ).strip().lower()
+        if exchange_id == "huobi":
+            exchange_id = "htx"
+        if exchange_id not in PUBLIC_KLINE_EXCHANGE_IDS:
+            exchange_id = "binance"
+        cache_key = f"{exchange_id}|{mt}"
+        cached = _PUBLIC_MARKET_INSTANCES.get(cache_key)
+        if cached is not None:
+            return cached
+        ccxt_id, options = resolve_ccxt_for_live_trading(exchange_id, mt)
+        inst = object.__new__(cls)
+        inst._allow_public_fallback = True
+        inst._scoped_exchange_id = exchange_id
+        inst._scoped_market_type = mt
+        inst._preferred_public_exchange_id = ""
+        inst._markets_load_lock = threading.Lock()
+        inst._init_ccxt_exchange(ccxt_id, options)
+        _PUBLIC_MARKET_INSTANCES[cache_key] = inst
         return inst
 
     def _init_ccxt_exchange(self, ccxt_exchange_id: str, options: Optional[Dict[str, Any]] = None) -> None:
@@ -124,10 +243,10 @@ class CryptoDataSource(BaseDataSource):
 
         exchange_id = (ccxt_exchange_id or "").strip().lower()
         if not hasattr(ccxt, exchange_id):
-            logger.warning("CCXT exchange '%s' not found, falling back to 'binance'", exchange_id)
-            exchange_id = "binance"
+            raise ValueError(f"Unsupported CCXT exchange: {exchange_id}")
 
         exchange_class = getattr(ccxt, exchange_id)
+        config = apply_public_ccxt_endpoint_config(config, exchange_id)
         self.exchange = exchange_class(config)
         self._markets_loaded = False
         self._markets_cache = None
@@ -147,22 +266,53 @@ class CryptoDataSource(BaseDataSource):
             if quote:
                 return f"{normalized}:{quote}"
         return normalized
+
+    def _invalid_symbol_key(self, symbol_pair: str) -> str:
+        exchange_id = getattr(self.exchange, 'id', '').lower()
+        mt = getattr(self, "_scoped_market_type", "") or "spot"
+        return f"{exchange_id}:{mt}:{str(symbol_pair or '').upper()}"
+
+    def _is_invalid_symbol_cached(self, symbol_pair: str) -> bool:
+        key = self._invalid_symbol_key(symbol_pair)
+        until = float(_INVALID_SYMBOL_UNTIL.get(key) or 0.0)
+        if time.time() < until:
+            return True
+        _INVALID_SYMBOL_UNTIL.pop(key, None)
+        return False
+
+    def _mark_invalid_symbol(self, symbol_pair: str, error: Any) -> None:
+        key = self._invalid_symbol_key(symbol_pair)
+        if not self._is_invalid_symbol_cached(symbol_pair):
+            logger.warning(
+                "Symbol '%s' not found on %s; suppressing repeat requests for %.0fs. Error: %s",
+                symbol_pair,
+                getattr(self.exchange, 'id', ''),
+                _invalid_symbol_ttl_sec(),
+                str(error)[:160],
+            )
+        _INVALID_SYMBOL_UNTIL[key] = time.time() + _invalid_symbol_ttl_sec()
     
     def _ensure_markets_loaded(self) -> bool:
         """确保 markets 已加载（用于符号验证）"""
         if self._markets_loaded and self._markets_cache is not None:
             return True
-        
-        try:
-            # 某些交易所需要显式加载 markets
-            if hasattr(self.exchange, 'load_markets'):
-                self.exchange.load_markets(reload=False)
-            self._markets_cache = getattr(self.exchange, 'markets', {})
-            self._markets_loaded = True
-            return True
-        except Exception as e:
-            logger.debug(f"Failed to load markets for {self.exchange.id}: {e}")
-            return False
+
+        lock = getattr(self, "_markets_load_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._markets_load_lock = lock
+        with lock:
+            if self._markets_loaded and self._markets_cache is not None:
+                return True
+            try:
+                if hasattr(self.exchange, 'load_markets'):
+                    self.exchange.load_markets(reload=False)
+                self._markets_cache = getattr(self.exchange, 'markets', {})
+                self._markets_loaded = True
+                return True
+            except Exception as e:
+                logger.debug(f"Failed to load markets for {self.exchange.id}: {e}")
+                return False
     
     def _normalize_symbol(self, symbol: str) -> Tuple[str, str]:
         """
@@ -180,13 +330,11 @@ class CryptoDataSource(BaseDataSource):
         
         sym = symbol.strip()
         
-        # 移除 swap/futures 后缀
         if ':' in sym:
             sym = sym.split(':', 1)[0]
         
         sym = sym.upper()
         
-        # 如果已经有分隔符，直接解析
         if '/' in sym:
             parts = sym.split('/', 1)
             base = parts[0].strip()
@@ -194,14 +342,12 @@ class CryptoDataSource(BaseDataSource):
             if base and quote:
                 return f"{base}/{quote}", base
         
-        # 尝试从常见报价货币中识别
         for quote in self.COMMON_QUOTES:
             if sym.endswith(quote) and len(sym) > len(quote):
                 base = sym[:-len(quote)]
                 if base:
                     return f"{base}/{quote}", base
         
-        # 如果无法识别，默认使用 USDT
         return f"{sym}/USDT", sym
     
     def _find_valid_symbol(self, base: str, preferred_quote: str = 'USDT') -> Optional[str]:
@@ -222,14 +368,12 @@ class CryptoDataSource(BaseDataSource):
         if not markets:
             return None
         
-        # 按优先级尝试不同的报价货币
         quotes_to_try = [preferred_quote] + [q for q in self.COMMON_QUOTES if q != preferred_quote]
         
         for quote in quotes_to_try:
             candidate = f"{base}/{quote}"
             if candidate in markets:
                 market = markets[candidate]
-                # 检查市场是否活跃
                 if market.get('active', True):
                     return candidate
         
@@ -242,8 +386,7 @@ class CryptoDataSource(BaseDataSource):
         不同交易所的符号格式要求：
         - Binance: BTC/USDT (标准格式)
         - OKX: BTC/USDT (标准格式，但某些币种可能不支持)
-        - Coinbase: BTC/USD (通常使用 USD 而不是 USDT)
-        - Kraken: XBT/USD (BTC 映射为 XBT)
+        Different providers may use different quote currencies or asset aliases.
         """
         normalized, base = self._normalize_symbol(symbol)
         
@@ -252,17 +395,6 @@ class CryptoDataSource(BaseDataSource):
         
         exchange_id = getattr(self.exchange, 'id', '').lower()
         
-        # 特殊处理：某些交易所的符号映射
-        if exchange_id == 'coinbase':
-            # Coinbase 通常使用 USD 而不是 USDT
-            if normalized.endswith('/USDT'):
-                usd_version = normalized.replace('/USDT', '/USD')
-                if self._ensure_markets_loaded():
-                    markets = self._markets_cache or {}
-                    if usd_version in markets:
-                        return usd_version
-        
-        # 尝试在交易所中查找有效符号
         if self._ensure_markets_loaded():
             valid_symbol = self._find_valid_symbol(base, normalized.split('/')[1] if '/' in normalized else 'USDT')
             if valid_symbol:
@@ -281,30 +413,47 @@ class CryptoDataSource(BaseDataSource):
         """
         if not symbol or not symbol.strip():
             return {'last': 0, 'symbol': symbol}
+
+        preferred_exchange = str(
+            getattr(self, "_preferred_public_exchange_id", "") or ""
+        ).strip().lower()
+        current_exchange = str(
+            getattr(self.exchange, "id", "") or ""
+        ).strip().lower()
+        fallback_market_type = str(
+            getattr(self, "_scoped_market_type", "") or "spot"
+        ).strip().lower()
+        if (
+            bool(getattr(self, "_allow_public_fallback", False))
+            and preferred_exchange
+            and preferred_exchange != current_exchange
+        ):
+            preferred_ticker = type(self).for_exchange(
+                preferred_exchange,
+                fallback_market_type,
+            ).get_ticker(symbol)
+            if float((preferred_ticker or {}).get("last") or 0) > 0:
+                return preferred_ticker
+            self._preferred_public_exchange_id = ""
         
         normalized = self._symbol_for_scoped_market(symbol)
 
         if not normalized:
             logger.warning(f"Failed to normalize symbol: {symbol}")
             return {'last': 0, 'symbol': symbol}
+
+        if self._is_invalid_symbol_cached(normalized):
+            return {'last': 0, 'symbol': symbol}
         
-        # 尝试获取 ticker
         try:
             ticker = self.exchange.fetch_ticker(normalized)
             if ticker and isinstance(ticker, dict):
                 return ticker
         except Exception as e:
             error_msg = str(e).lower()
-            is_symbol_error = any(keyword in error_msg for keyword in [
-                'does not have market symbol',
-                'symbol not found',
-                'invalid symbol',
-                'market does not exist',
-                'trading pair not found'
-            ])
+            is_symbol_error = _is_symbol_not_found_error(e)
             
             if is_symbol_error:
-                # 尝试查找替代符号
                 base = normalized.split('/')[0] if '/' in normalized else normalized
                 if self._ensure_markets_loaded():
                     valid_symbol = self._find_valid_symbol(base)
@@ -317,12 +466,32 @@ class CryptoDataSource(BaseDataSource):
                         except Exception as e2:
                             logger.debug(f"Alternative symbol {valid_symbol} also failed: {e2}")
             
-            # 如果所有尝试都失败，记录警告并返回默认值
-            logger.warning(
-                f"Symbol '{symbol}' (normalized: {normalized}) not found on {self.exchange.id}. "
-                f"Error: {str(e)[:100]}"
-            )
+            if is_symbol_error:
+                self._mark_invalid_symbol(normalized, e)
+            else:
+                logger.warning(
+                    f"Symbol '{symbol}' (normalized: {normalized}) not found on {self.exchange.id}. "
+                    f"Error: {str(e)[:100]}"
+                )
         
+        if bool(getattr(self, "_allow_public_fallback", False)):
+            for exchange_id in PUBLIC_KLINE_FALLBACK_IDS:
+                if exchange_id == current_exchange:
+                    continue
+                fallback_ticker = type(self).for_exchange(
+                    exchange_id,
+                    fallback_market_type,
+                ).get_ticker(symbol)
+                if float((fallback_ticker or {}).get("last") or 0) > 0:
+                    self._preferred_public_exchange_id = exchange_id
+                    logger.warning(
+                        "Public crypto ticker provider failed over from %s to %s for %s",
+                        current_exchange or "default",
+                        exchange_id,
+                        symbol,
+                    )
+                    return fallback_ticker
+
         return {'last': 0, 'symbol': symbol}
     
     def get_kline(
@@ -335,13 +504,41 @@ class CryptoDataSource(BaseDataSource):
     ) -> List[Dict[str, Any]]:
         """获取加密货币K线数据"""
         klines = []
+        symbol_pair = ""
+
+        # A public source is cached and reused by chart/backtest/signal
+        # runtimes. Once its configured venue has failed and another venue has
+        # returned valid candles, reuse that known-good venue on subsequent
+        # calls. Without this small circuit breaker every strategy cycle first
+        # waits for the same geo-blocked/down provider and only then falls back.
+        # Live venue-scoped sources never enter this path.
+        preferred_exchange = str(
+            getattr(self, "_preferred_public_exchange_id", "") or ""
+        ).strip().lower()
+        current_exchange = str(
+            getattr(self.exchange, "id", "") or ""
+        ).strip().lower()
+        fallback_market_type = str(
+            getattr(self, "_scoped_market_type", "") or "spot"
+        ).strip().lower()
+        if (
+            bool(getattr(self, "_allow_public_fallback", False))
+            and preferred_exchange
+            and preferred_exchange != current_exchange
+        ):
+            preferred_rows = type(self).for_exchange(
+                preferred_exchange,
+                fallback_market_type,
+            ).get_kline(symbol, timeframe, limit, before_time, after_time)
+            if preferred_rows:
+                return preferred_rows
+            # The promoted provider has also become unavailable. Clear it and
+            # run the normal ordered failover below.
+            self._preferred_public_exchange_id = ""
         
         try:
             ccxt_timeframe = self.TIMEFRAME_MAP.get(timeframe, '1d')
 
-            # 如果当前交易所原生不支持这个周期（典型例子：Coinbase 没有 1w/4h/3m），
-            # 改为从更细的granularity拉数据，再在服务端聚合成目标周期。这样1W/4H在
-            # 不支持的交易所上仍可使用，无需前端改动。
             resample_bucket = 1
             fetch_ccxt_timeframe = ccxt_timeframe
             fetch_qd_timeframe = timeframe
@@ -356,13 +553,11 @@ class CryptoDataSource(BaseDataSource):
                         f"and no finer supported granularity is available for resampling. "
                         f"Supported: {sorted(exchange_timeframes.keys())}"
                     )
-                    return []
+                    raise _PublicKlineUnavailable
                 source_ccxt_tf, bucket = picked
                 fetch_ccxt_timeframe = source_ccxt_tf
                 fetch_qd_timeframe = self._ccxt_to_qd_timeframe(source_ccxt_tf, timeframe)
                 resample_bucket = bucket
-                # 单次fetch_ohlcv受交易所上限制约（Coinbase=300），超出会被截断；
-                # 在这之内取尽量多的源candle以填满请求的聚合数。
                 fetch_limit = min(limit * bucket, self._SINGLE_FETCH_HARD_CAP)
                 logger.info(
                     f"Exchange '{self.exchange.id}' has no native '{ccxt_timeframe}' "
@@ -374,9 +569,10 @@ class CryptoDataSource(BaseDataSource):
 
             if not symbol_pair:
                 logger.warning(f"Failed to normalize symbol for K-line: {symbol}")
-                return []
+                raise _PublicKlineUnavailable
 
-            # logger.info(f"获取加密货币K线: {symbol_pair}, 周期: {ccxt_timeframe}, 条数: {limit}")
+            if self._is_invalid_symbol_cached(symbol_pair):
+                raise _PublicKlineUnavailable
 
             ohlcv = self._fetch_ohlcv(
                 symbol_pair, fetch_ccxt_timeframe, fetch_limit,
@@ -385,7 +581,7 @@ class CryptoDataSource(BaseDataSource):
 
             if not ohlcv:
                 logger.warning(f"CCXT returned no K-lines: {symbol_pair}")
-                return []
+                raise _PublicKlineUnavailable
 
             if resample_bucket > 1:
                 ohlcv = self._resample_ohlcv(ohlcv, resample_bucket)
@@ -394,9 +590,8 @@ class CryptoDataSource(BaseDataSource):
                         f"Resampling produced no candles for {symbol_pair} "
                         f"(bucket={resample_bucket}, source len was less than one bucket)"
                     )
-                    return []
+                    raise _PublicKlineUnavailable
 
-            # 转换数据格式
             for candle in ohlcv:
                 if len(candle) < 6:
                     continue
@@ -409,7 +604,6 @@ class CryptoDataSource(BaseDataSource):
                     volume=candle[5]
                 ))
             
-            # 过滤和限制（回测带 after_time 时保留整段窗口，避免 [-limit:] 丢掉左端历史）
             klines = self.filter_and_limit(
                 klines,
                 limit,
@@ -418,7 +612,6 @@ class CryptoDataSource(BaseDataSource):
                 truncate=(after_time is None),
             )
 
-            # 记录结果
             self.log_result(symbol, klines, timeframe)
 
             # Concise trace so backtest logs can correlate requested window with actual window
@@ -434,11 +627,52 @@ class CryptoDataSource(BaseDataSource):
                 except Exception:
                     pass
 
+        except _PublicKlineUnavailable:
+            pass
         except Exception as e:
             logger.error(f"Failed to fetch crypto K-lines {symbol}: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
-        
+
+        if not klines and bool(getattr(self, "_allow_public_fallback", False)):
+            current_exchange = str(getattr(self.exchange, "id", "") or "").strip().lower()
+            fallback_market_type = str(
+                getattr(self, "_scoped_market_type", "") or "spot"
+            ).strip().lower()
+            for exchange_id in PUBLIC_KLINE_FALLBACK_IDS:
+                if exchange_id == current_exchange:
+                    continue
+                try:
+                    fallback_source = type(self).for_exchange(
+                        exchange_id,
+                        fallback_market_type,
+                    )
+                    fallback_rows = fallback_source.get_kline(
+                        symbol,
+                        timeframe,
+                        limit,
+                        before_time,
+                        after_time,
+                    )
+                    if fallback_rows:
+                        self._preferred_public_exchange_id = exchange_id
+                        logger.warning(
+                            "Public crypto K-line provider failed over from %s to %s for %s %s",
+                            current_exchange or "default",
+                            exchange_id,
+                            symbol,
+                            timeframe,
+                        )
+                        return fallback_rows
+                except Exception as exc:
+                    logger.warning(
+                        "Public crypto K-line fallback %s failed for %s %s: %s",
+                        exchange_id,
+                        symbol,
+                        timeframe,
+                        str(exc),
+                    )
+
         return klines
 
     @classmethod
@@ -504,10 +738,7 @@ class CryptoDataSource(BaseDataSource):
         """获取OHLCV数据（支持分页获取完整数据）"""
         try:
             if before_time:
-                # 计算时间范围（UTC，与交易所 OHLCV 毫秒时间戳一致）
                 total_seconds = self.calculate_time_range(timeframe, limit)
-                # 回测里 before_time = end_date+1 天，常比「当前时刻」更晚；Coinbase 会报
-                # start must not be in the future（其 start 指查询上界/窗口边界）
                 now_ts = int(datetime.now(timezone.utc).timestamp())
                 safe_before_ts = min(int(before_time), now_ts)
                 if safe_before_ts < int(before_time):
@@ -528,8 +759,28 @@ class CryptoDataSource(BaseDataSource):
                     since = max(0, now_ms - timeframe_ms)
                 end_ms = safe_before_ts * 1000
 
+                exchange_id = str(getattr(self.exchange, "id", "") or "").strip().lower()
+                recent_limit = int(self._RECENT_CANDLE_LIMITS.get(exchange_id, 0) or 0)
+                if recent_limit > 0:
+                    earliest_supported_ms = max(0, now_ms - timeframe_ms * (recent_limit - 1))
+                    if end_ms < earliest_supported_ms:
+                        logger.info(
+                            "Skipped %s %s history because the requested end precedes the exchange recent-candle window",
+                            exchange_id,
+                            ccxt_timeframe,
+                        )
+                        return []
+                    if since < earliest_supported_ms:
+                        logger.info(
+                            "Clamped %s %s history start to the exchange recent-candle limit (%s bars)",
+                            exchange_id,
+                            ccxt_timeframe,
+                            recent_limit,
+                        )
+                        since = earliest_supported_ms
+
                 all_ohlcv: List[List[Any]] = []
-                batch_limit = 300  # Coinbase limit is often 300, safer than 1000
+                batch_limit = 300  # Conservative cross-provider request limit.
                 current_since = since
                 max_batches = 6000
                 empty_streak = 0
@@ -589,7 +840,6 @@ class CryptoDataSource(BaseDataSource):
                         empty_streak += 1
                         if empty_streak >= max_empty:
                             break
-                        # 跳过可能的空档，避免卡死在同一 since
                         current_since += timeframe_ms * min(batch_limit, 64)
                         if inter_batch_sleep:
                             _t.sleep(inter_batch_sleep)
@@ -606,9 +856,12 @@ class CryptoDataSource(BaseDataSource):
                     if inter_batch_sleep:
                         _t.sleep(inter_batch_sleep)
 
-                # 按开盘时间去重并排序，防止分页重叠
                 by_ts = {int(row[0]): row for row in all_ohlcv if row and len(row) >= 6}
                 ohlcv = sorted(by_ts.values(), key=lambda r: r[0])
+                if not ohlcv:
+                    return self._fetch_ohlcv_fallback(
+                        symbol_pair, ccxt_timeframe, limit, before_time, timeframe, after_time
+                    )
             else:
                 # No window specified: ask for at most the exchange's per-call cap.
                 # Passing the raw `limit` here can be tens of thousands for long
@@ -618,10 +871,23 @@ class CryptoDataSource(BaseDataSource):
                 safe_limit = min(int(limit), self._SINGLE_FETCH_HARD_CAP)
                 ohlcv = self.exchange.fetch_ohlcv(symbol_pair, ccxt_timeframe, limit=safe_limit)
 
-            # logger.info(f"CCXT 返回 {len(ohlcv) if ohlcv else 0} 条数据")
             return ohlcv
 
         except Exception as e:
+            if _is_symbol_not_found_error(e):
+                self._mark_invalid_symbol(symbol_pair, e)
+                return []
+            partial_rows = locals().get("all_ohlcv") or []
+            if partial_rows:
+                logger.warning(
+                    "CCXT paginated fetch stopped early for %s %s; returning %s available candles: %s",
+                    symbol_pair,
+                    ccxt_timeframe,
+                    len(partial_rows),
+                    str(e),
+                )
+                by_ts = {int(row[0]): row for row in partial_rows if row and len(row) >= 6}
+                return sorted(by_ts.values(), key=lambda row: row[0])
             logger.warning(f"CCXT fetch_ohlcv failed: {str(e)}; trying fallback")
             return self._fetch_ohlcv_fallback(
                 symbol_pair, ccxt_timeframe, limit, before_time, timeframe, after_time
@@ -664,9 +930,31 @@ class CryptoDataSource(BaseDataSource):
             # page of data, which downstream callers can then handle gracefully.
             safe_limit = min(int(limit), self._SINGLE_FETCH_HARD_CAP)
             ohlcv = self.exchange.fetch_ohlcv(symbol_pair, ccxt_timeframe, since=since, limit=safe_limit)
-            # logger.info(f"CCXT 备用方法返回 {len(ohlcv) if ohlcv else 0} 条数据")
-            return ohlcv
+            if ohlcv:
+                return ohlcv
         except Exception as e:
-            logger.error(f"CCXT fallback method also failed: {str(e)}")
-            return []
+            if _is_symbol_not_found_error(e):
+                self._mark_invalid_symbol(symbol_pair, e)
+                return []
+            logger.warning("Requested-window fallback failed for %s: %s", symbol_pair, str(e))
 
+        try:
+            recent = self.exchange.fetch_ohlcv(
+                symbol_pair,
+                ccxt_timeframe,
+                limit=min(int(limit), self._SINGLE_FETCH_HARD_CAP),
+            )
+            if recent:
+                logger.warning(
+                    "Using the most recent %s candles for %s %s because the requested history window is unavailable",
+                    len(recent),
+                    symbol_pair,
+                    ccxt_timeframe,
+                )
+                return recent
+        except Exception as e:
+            if _is_symbol_not_found_error(e):
+                self._mark_invalid_symbol(symbol_pair, e)
+            else:
+                logger.error("Recent-candle fallback also failed for %s: %s", symbol_pair, str(e))
+        return []

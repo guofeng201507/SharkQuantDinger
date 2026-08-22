@@ -20,20 +20,12 @@ broker's client implementation. Everything else picks it up automatically.
 
 from typing import Dict, Optional, Set
 
+from app.services.live_trading.capabilities import CRYPTO_VENUE_CAPABILITIES
+
 
 # ---------------------------------------------------------------------------
 # Canonical sets
 # ---------------------------------------------------------------------------
-
-# All crypto exchanges QuantDinger has wired up in live_trading/factory.py.
-# Each is assumed to support both spot and swap unless noted otherwise.
-_CRYPTO_EXCHANGES_SPOT_AND_SWAP: Set[str] = {
-    "binance", "okx", "bitget", "bybit",
-    "kraken", "kucoin", "gate", "deepcoin", "htx",
-}
-# Coinbase Exchange API is institutional spot-only on our side.
-_CRYPTO_EXCHANGES_SPOT_ONLY: Set[str] = {"coinbaseexchange"}
-
 
 def _build_broker_markets() -> Dict[str, Dict[str, Set[str]]]:
     """Construct the master matrix.
@@ -43,21 +35,10 @@ def _build_broker_markets() -> Dict[str, Dict[str, Set[str]]]:
     matrix: Dict[str, Dict[str, Set[str]]] = {
         # US stocks via Interactive Brokers (TWS/Gateway, local desktop only)
         "ibkr": {"USStock": {"spot"}},
-        # Forex via MetaTrader 5 terminal (local desktop only)
-        "mt5": {"Forex": {"spot"}},
-        # Alpaca: REST broker for US equities + crypto.
-        # Crypto is *spot only* on Alpaca - they have no perpetual / margin
-        # crypto product, so a 'swap' market_type is impossible regardless of
-        # what we implement.
-        "alpaca": {
-            "USStock": {"spot"},
-            "Crypto": {"spot"},
-        },
+        "alpaca": {"USStock": {"spot"}},
     }
-    for ex in _CRYPTO_EXCHANGES_SPOT_AND_SWAP:
-        matrix[ex] = {"Crypto": {"spot", "swap"}}
-    for ex in _CRYPTO_EXCHANGES_SPOT_ONLY:
-        matrix[ex] = {"Crypto": {"spot"}}
+    for ex, capability in CRYPTO_VENUE_CAPABILITIES.items():
+        matrix[ex] = {"Crypto": set(capability.market_types)}
     return matrix
 
 
@@ -77,22 +58,22 @@ LONG_ONLY_BROKERS: Set[str] = {"ibkr", "alpaca"}
 # Map bot strategy type -> markets where that bot makes sense and can
 # actually execute. Reasoning:
 #   grid: needs continuous high-frequency quotes + bidirectional. USStock
-#         dies during the 16-hour close + open gaps. OK on Crypto and Forex.
+#         dies during the 16-hour close + open gaps. OK on Crypto.
 #   martingale: needs tiny add-on lots + bidirectional. Stock min-share size
 #               + gap risk makes it impractical outside crypto perpetuals.
 #   dca / trend: long-only by nature, fine on every market we support.
 BOT_TYPE_MARKETS: Dict[str, Set[str]] = {
-    "grid":       {"Crypto", "Forex"},
+    "grid":       {"Crypto"},
     "martingale": {"Crypto"},
-    "dca":        {"Crypto", "USStock", "Forex"},
-    "trend":      {"Crypto", "USStock", "Forex"},
+    "dca":        {"Crypto", "USStock"},
+    "trend":      {"Crypto", "USStock"},
 }
 
 
 # Markets we recognize as legal canonical values. Anything outside this set
 # is considered analysis/backtest-only (e.g. CNStock, HKStock, MOEX, Futures
 # generic) and may not be used for live strategies.
-LIVE_MARKET_CATEGORIES: Set[str] = {"Crypto", "USStock", "Forex"}
+LIVE_MARKET_CATEGORIES: Set[str] = {"Crypto", "USStock"}
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +88,8 @@ def _norm_market_type(value: Optional[str]) -> str:
     raw = (value or "").strip().lower()
     if raw in ("futures", "future", "perp", "perpetual"):
         return "swap"
+    if raw in ("usstock", "us_stock", "stock", "stocks", "equity", "cash"):
+        return "spot"
     return raw
 
 
@@ -173,8 +156,7 @@ def validate_strategy_config(
         3. (broker, market) combination must be in BROKER_MARKETS.
         4. market_type must be in allowed_market_types(broker, market).
         5. Long-only brokers (ibkr, alpaca) must have trade_direction='long'.
-        6. For Crypto, short signals require market_type='swap' (Forex on
-           MT5 stores spot but is naturally bidirectional).
+        6. For Crypto, short signals require market_type='swap'.
         7. bot_type must be compatible with market_category.
 
     Returns:
@@ -186,18 +168,20 @@ def validate_strategy_config(
     td = (trade_direction or "").strip().lower()
     bt = (bot_type or "").strip().lower()
 
-    # Rule 1: market is one we can route in live trading
-    if mc and mc not in LIVE_MARKET_CATEGORIES:
-        raise ValueError(
-            f"market_category='{mc}' is not supported for live trading. "
-            f"Supported: {sorted(LIVE_MARKET_CATEGORIES)}. "
-            "(CNStock / HKStock / MOEX / Futures are analysis-only.)"
-        )
-
     # Rule 2 + 3: broker x market combination
     if not ex:
+        if mc and mc not in LIVE_MARKET_CATEGORIES:
+            raise ValueError(
+                f"market_category='{mc}' is not supported for live trading. "
+                f"Supported: {sorted(LIVE_MARKET_CATEGORIES)}. "
+                "(CNStock / HKStock / MOEX / Futures are analysis-only.)"
+            )
         if require_exchange:
-            raise ValueError("exchange_id is required for live strategies.")
+            raise ValueError(
+                "exchange_id is required for live strategies. "
+                "Set exchange_config.exchange_id (or credential_id), "
+                "or trading_config.exchange_id for legacy clients."
+            )
         # Signal-mode: skip the rest. Direction/bot rules need a broker
         # context to be meaningful.
         return
@@ -206,6 +190,16 @@ def validate_strategy_config(
         known = sorted(BROKER_MARKETS.keys())
         raise ValueError(
             f"Unknown exchange_id='{ex}'. Known brokers: {known}."
+        )
+
+    # Rule 1: market is one we can route in live trading. This runs after the
+    # broker existence check so removed brokers report as unknown even when
+    # paired with an analysis-only market.
+    if mc and mc not in LIVE_MARKET_CATEGORIES:
+        raise ValueError(
+            f"market_category='{mc}' is not supported for live trading. "
+            f"Supported: {sorted(LIVE_MARKET_CATEGORIES)}. "
+            "(CNStock / HKStock / MOEX / Futures are analysis-only.)"
         )
 
     if mc and mc not in BROKER_MARKETS[ex]:
@@ -221,14 +215,6 @@ def validate_strategy_config(
     if mc and mt:
         allowed_mts = allowed_market_types(ex, mc)
         if mt not in allowed_mts:
-            # Special-case the most common confusion so the error is helpful.
-            if ex == "alpaca" and mc == "Crypto" and mt == "swap":
-                raise ValueError(
-                    "Alpaca crypto desk is spot-only (no perpetual / margin "
-                    "product). Got market_type='swap'. Set market_type='spot', "
-                    "or to trade crypto perpetuals use Binance/OKX/Bybit/"
-                    "Bitget with market_type='swap'."
-                )
             raise ValueError(
                 f"{ex.upper()} + {mc} does not support market_type='{mt}'. "
                 f"Allowed: {sorted(allowed_mts)}."
@@ -240,13 +226,11 @@ def validate_strategy_config(
             f"{ex.upper()} live execution in QuantDinger is currently "
             f"long-only (got trade_direction='{td}'). For short selling "
             f"please use a perpetual-swap crypto exchange "
-            f"(Binance/OKX/Bybit/Bitget) for crypto, or MT5 for forex. "
+            f"(Binance/OKX/Bybit/Bitget) for crypto. "
             f"Stock short selling on IBKR/Alpaca is not yet implemented."
         )
 
     # Rule 6: crypto short requires swap.
-    # Forex on MT5 stores market_type='spot' but is naturally bidirectional
-    # (short = SELL), so this rule only applies to crypto markets.
     if mc == "Crypto" and td == "short" and mt and mt != "swap":
         raise ValueError(
             f"Short selling crypto requires market_type='swap', got '{mt}'. "

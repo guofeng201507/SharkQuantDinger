@@ -15,15 +15,17 @@ import json
 import time
 from typing import Any, Dict, List, Tuple
 
-from flask import Blueprint, jsonify, request, g
+from flask import g, jsonify, request
+from app.openapi.blueprint import HumanBlueprint as Blueprint
 
 from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
 from app.utils.auth import login_required
+from app.utils.request_guard import RequestGuardError, cache_key, guarded_cached
 
 logger = get_logger(__name__)
 
-dashboard_bp = Blueprint("dashboard", __name__)
+dashboard_blp = Blueprint("dashboard", __name__)
 
 
 def _safe_int(v: Any, default: int) -> int:
@@ -41,8 +43,10 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
 
 
 def _net_trade_pnl(t: Dict[str, Any]) -> float:
-    """Realised P&L after exchange-synced commission (USDT-margined pairs)."""
-    return _safe_float(t.get("profit"), 0.0) - _safe_float(t.get("commission"), 0.0)
+    """Realised P&L after open + close commissions (USDT-margined pairs)."""
+    from app.utils.trade_net_pnl import net_pnl_for_equity_step
+
+    return float(net_pnl_for_equity_step(t))
 
 
 def _format_datetime(dt: Any) -> Any:
@@ -94,43 +98,18 @@ def _as_list(value: Any) -> List[str]:
 
 
 def _is_bot_strategy(row: Dict[str, Any]) -> bool:
-    try:
-        mode = str((row or {}).get("strategy_mode") or "").strip().lower()
-        return mode == "bot"
-    except Exception:
-        return False
+    config = _safe_json_loads((row or {}).get("trading_config"), {})
+    return str(config.get("strategy_family") or "").strip().lower() == "robot"
 
 
-def _calc_unrealized_pnl(side: str, entry_price: float, current_price: float, size: float) -> float:
-    try:
-        ep = float(entry_price or 0.0)
-        cp = float(current_price or 0.0)
-        sz = float(size or 0.0)
-        if ep <= 0 or cp <= 0 or sz <= 0:
-            return 0.0
-        s = (side or "").strip().lower()
-        if s == "short":
-            return (ep - cp) * sz
-        return (cp - ep) * sz
-    except Exception:
-        return 0.0
+def _strategy_bucket(row: Dict[str, Any]) -> str:
+    """Classify a strategy row for dashboard presentation."""
+    if _is_bot_strategy(row):
+        return "bot"
+    return "script"
 
 
-def _calc_pnl_percent(entry_price: float, size: float, pnl: float, leverage: float = 1.0, market_type: str = "spot") -> float:
-    try:
-        denom = float(entry_price or 0.0) * float(size or 0.0)
-        if denom <= 0:
-            return 0.0
-        lev = float(leverage or 1.0)
-        if lev <= 0:
-            lev = 1.0
-        mt = str(market_type or "").strip().lower()
-        # Margin PnL% (user expectation): pnl / (notional / leverage)
-        # = pnl / notional * leverage
-        mult = lev if mt in ("swap", "futures", "future", "perp", "perpetual") else 1.0
-        return float(pnl) / denom * 100.0 * float(mult)
-    except Exception:
-        return 0.0
+from app.utils.pnl import calc_pnl_percent, calc_unrealized_pnl
 
 
 def _compute_performance_stats(trades: List[Dict[str, Any]], initial_capital: float = 0.0) -> Dict[str, Any]:
@@ -309,12 +288,14 @@ def _compute_strategy_stats(trades: List[Dict[str, Any]], strategies: List[Dict[
     existing_strategy_ids: set = set()
     sid_to_name: Dict[int, str] = {}
     sid_to_capital: Dict[int, float] = {}
+    sid_to_bucket: Dict[int, str] = {}
     for s in strategies:
         sid = _safe_int(s.get("id"), 0)
         if sid > 0:
             existing_strategy_ids.add(sid)
             sid_to_name[sid] = str(s.get("strategy_name") or f"Strategy_{sid}")
             sid_to_capital[sid] = _safe_float(s.get("initial_capital"), 0.0)
+            sid_to_bucket[sid] = _strategy_bucket(s)
 
     # Group trades by strategy (only for existing strategies)
     sid_to_trades: Dict[int, List[Dict[str, Any]]] = {}
@@ -337,6 +318,7 @@ def _compute_strategy_stats(trades: List[Dict[str, Any]], strategies: List[Dict[
         result.append({
             "strategy_id": sid,
             "strategy_name": sid_to_name.get(sid, f"Strategy_{sid}"),
+            "strategy_bucket": sid_to_bucket.get(sid, "script"),
             "total_trades": stats["total_trades"],
             "win_rate": stats["win_rate"],
             "profit_factor": stats["profit_factor"],
@@ -350,7 +332,7 @@ def _compute_strategy_stats(trades: List[Dict[str, Any]], strategies: List[Dict[
     return result
 
 
-@dashboard_bp.route("/summary", methods=["GET"])
+@dashboard_blp.route("/summary", methods=["GET"])
 @login_required
 def summary():
     """
@@ -364,7 +346,7 @@ def summary():
             cur = db.cursor()
             cur.execute(
                 """
-                SELECT id, strategy_name, strategy_type, status, initial_capital, trading_config, strategy_mode
+                SELECT id, strategy_name, strategy_type, status, initial_capital, trading_config
                 FROM qd_strategies_trading
                 WHERE user_id = ?
                 """,
@@ -373,26 +355,12 @@ def summary():
             strategies = cur.fetchall() or []
             cur.close()
 
-        strategies = [s for s in strategies if not _is_bot_strategy(s)]
         running = [s for s in strategies if (s.get("status") or "").strip().lower() == "running"]
-        indicator_strategy_count = len([s for s in running if (s.get("strategy_type") or "") == "IndicatorStrategy"])
-
-        # "AI strategies" in dashboard card: count strategies that enabled AI analysis/filtering.
-        # This aligns with the UI toggle `enable_ai_filter` in trading_config.
-        def _truthy(v: Any) -> bool:
-            if v is True:
-                return True
-            if isinstance(v, (int, float)) and float(v) == 1:
-                return True
-            if isinstance(v, str) and v.strip().lower() in ("1", "true", "yes", "y", "on"):
-                return True
-            return False
+        running_strategy_count = len(running)
+        running_script_count = len([s for s in running if _strategy_bucket(s) == "script"])
+        running_bot_count = len([s for s in running if _strategy_bucket(s) == "bot"])
 
         ai_enabled_strategy_count = 0
-        for s in strategies:
-            tc = _safe_json_loads(s.get("trading_config"), {}) or {}
-            if isinstance(tc, dict) and _truthy(tc.get("enable_ai_filter")):
-                ai_enabled_strategy_count += 1
 
         # Positions (best-effort, filtered by user_id)
         with get_db_connection() as db:
@@ -404,7 +372,6 @@ def summary():
                 INNER JOIN qd_strategies_trading s ON s.id = p.strategy_id
                 WHERE p.user_id = ?
                   AND s.user_id = ?
-                  AND COALESCE(LOWER(TRIM(s.strategy_mode)), 'signal') <> 'bot'
                 ORDER BY p.updated_at DESC
                 """,
                 (user_id, user_id)
@@ -415,13 +382,13 @@ def summary():
         current_positions: List[Dict[str, Any]] = []
         total_unrealized_pnl = 0.0
         for r in rows:
-            pnl = _calc_unrealized_pnl(
+            pnl = calc_unrealized_pnl(
                 side=str(r.get("side") or ""),
                 entry_price=float(r.get("entry_price") or 0.0),
                 current_price=float(r.get("current_price") or 0.0),
                 size=float(r.get("size") or 0.0),
             )
-            pct = _calc_pnl_percent(
+            pct = calc_pnl_percent(
                 float(r.get("entry_price") or 0.0),
                 float(r.get("size") or 0.0),
                 pnl,
@@ -454,12 +421,43 @@ def summary():
                 INNER JOIN qd_strategies_trading s ON s.id = t.strategy_id
                 WHERE t.user_id = ?
                   AND s.user_id = ?
-                  AND COALESCE(LOWER(TRIM(s.strategy_mode)), 'signal') <> 'bot'
                   AND t.profit IS NOT NULL
                 """,
                 (user_id, user_id)
             )
             total_trades_all = int((cur.fetchone() or {}).get("cnt") or 0)
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(COALESCE(t.profit, 0) - COALESCE(t.commission_quote, t.commission, 0)), 0) AS total
+                FROM qd_strategy_trades t
+                INNER JOIN qd_strategies_trading s ON s.id = t.strategy_id
+                WHERE t.user_id = ?
+                  AND s.user_id = ?
+                  AND t.profit IS NOT NULL
+                """,
+                (user_id, user_id)
+            )
+            total_realized_pnl_all = float((cur.fetchone() or {}).get("total") or 0.0)
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(COALESCE(f.amount, 0)), 0) AS total
+                FROM qd_strategy_funding_fees f
+                INNER JOIN qd_strategies_trading s ON s.id = f.strategy_id
+                WHERE f.user_id = ? AND s.user_id = ?
+                """,
+                (user_id, user_id),
+            )
+            total_realized_pnl_all += float((cur.fetchone() or {}).get("total") or 0.0)
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(COALESCE(a.amount, 0)), 0) AS total
+                FROM qd_strategy_broker_activities a
+                INNER JOIN qd_strategies_trading s ON s.id = a.strategy_id
+                WHERE a.user_id = ? AND s.user_id = ?
+                """,
+                (user_id, user_id),
+            )
+            total_realized_pnl_all += float((cur.fetchone() or {}).get("total") or 0.0)
             cur.close()
 
         with get_db_connection() as db:
@@ -471,7 +469,6 @@ def summary():
                 INNER JOIN qd_strategies_trading s ON s.id = t.strategy_id
                 WHERE t.user_id = ?
                   AND s.user_id = ?
-                  AND COALESCE(LOWER(TRIM(s.strategy_mode)), 'signal') <> 'bot'
                 ORDER BY t.created_at DESC
                 LIMIT 500
                 """,
@@ -501,6 +498,9 @@ def summary():
                 pass
 
         # Compute performance statistics with initial capital for proper drawdown calculation
+        from app.utils.trade_net_pnl import enrich_trades_net_pnl
+
+        enrich_trades_net_pnl(recent_trades)
         perf_stats = _compute_performance_stats(recent_trades, initial_capital=total_initial_capital)
         # For dashboard top card: show all-time total trade count (not limited by LIMIT 500).
         perf_stats["total_trades"] = int(total_trades_all)
@@ -508,8 +508,8 @@ def summary():
         # Compute per-strategy statistics
         strategy_stats = _compute_strategy_stats(recent_trades, strategies)
 
-        # Include realized PnL from trades
-        total_realized_pnl = sum(_net_trade_pnl(t) for t in recent_trades)
+        # All-time realized PnL for equity cards; recent_trades is capped at 500 rows.
+        total_realized_pnl = float(total_realized_pnl_all)
         total_pnl = float(total_unrealized_pnl + total_realized_pnl)
         total_equity = float(total_initial_capital + total_pnl)
 
@@ -611,7 +611,9 @@ def summary():
                 "msg": "success",
                 "data": {
                     "ai_strategy_count": int(ai_enabled_strategy_count),
-                    "indicator_strategy_count": int(indicator_strategy_count),
+                    "running_strategy_count": int(running_strategy_count),
+                    "running_script_count": int(running_script_count),
+                    "running_bot_count": int(running_bot_count),
                     "total_equity": round(total_equity, 2),
                     "total_pnl": round(total_pnl, 2),
                     "total_realized_pnl": round(total_realized_pnl, 2),
@@ -637,7 +639,7 @@ def summary():
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
-@dashboard_bp.route("/pendingOrders", methods=["GET"])
+@dashboard_blp.route("/pendingOrders", methods=["GET"])
 @login_required
 def pending_orders():
     """
@@ -647,116 +649,119 @@ def pending_orders():
         user_id = g.user_id
         page = max(1, _safe_int(request.args.get("page"), 1))
         page_size = max(1, min(200, _safe_int(request.args.get("pageSize"), 20)))
-        offset = (page - 1) * page_size
 
-        with get_db_connection() as db:
-            cur = db.cursor()
-            cur.execute("SELECT COUNT(1) AS cnt FROM pending_orders WHERE user_id = ?", (user_id,))
-            total = int((cur.fetchone() or {}).get("cnt") or 0)
-            cur.close()
+        def _compute_pending_orders() -> Dict[str, Any]:
+            offset = (page - 1) * page_size
 
-        with get_db_connection() as db:
-            cur = db.cursor()
-            cur.execute(
-                """
-                SELECT o.*,
-                       s.strategy_name,
-                       s.notification_config AS strategy_notification_config,
-                       s.exchange_config AS strategy_exchange_config,
-                       s.market_type AS strategy_market_type,
-                       s.market_category AS strategy_market_category,
-                       s.execution_mode AS strategy_execution_mode
-                FROM pending_orders o
-                LEFT JOIN qd_strategies_trading s ON s.id = o.strategy_id
-                WHERE o.user_id = ?
-                ORDER BY o.id DESC
-                LIMIT ? OFFSET ?
-                """,
-                (user_id, int(page_size), int(offset)),
-            )
-            rows = cur.fetchall() or []
-            cur.close()
+            with get_db_connection() as db:
+                cur = db.cursor()
+                cur.execute("SELECT COUNT(1) AS cnt FROM pending_orders WHERE user_id = ?", (user_id,))
+                total = int((cur.fetchone() or {}).get("cnt") or 0)
+                cur.close()
 
-        out: List[Dict[str, Any]] = []
-        for r in rows:
-            status = (r.get("status") or "").strip().lower()
-            if status == "sent":
-                status = "completed"
-            if status == "deferred":
-                status = "pending"
+            with get_db_connection() as db:
+                cur = db.cursor()
+                cur.execute(
+                    """
+                    SELECT o.*,
+                           s.strategy_name,
+                           s.notification_config AS strategy_notification_config,
+                           s.exchange_config AS strategy_exchange_config,
+                           s.market_type AS strategy_market_type,
+                           s.market_category AS strategy_market_category,
+                           s.execution_mode AS strategy_execution_mode
+                    FROM pending_orders o
+                    LEFT JOIN qd_strategies_trading s ON s.id = o.strategy_id
+                    WHERE o.user_id = ?
+                    ORDER BY o.id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (user_id, int(page_size), int(offset)),
+                )
+                rows = cur.fetchall() or []
+                cur.close()
 
-            # Frontend expects these keys:
-            # - filled_amount, filled_price, error_message
-            filled_amount = float(r.get("filled") or 0.0)
-            filled_price = float(r.get("avg_price") or 0.0) if float(r.get("avg_price") or 0.0) > 0 else float(r.get("price") or 0.0)
+            out: List[Dict[str, Any]] = []
+            for r in rows:
+                status = (r.get("status") or "").strip().lower()
+                if status == "sent":
+                    status = "completed"
+                if status == "deferred":
+                    status = "pending"
 
-            # Derive exchange_id + notify channels without leaking secrets to frontend.
-            ex_cfg = _safe_json_loads(r.get("strategy_exchange_config"), {}) or {}
-            notify_cfg = _safe_json_loads(r.get("strategy_notification_config"), {}) or {}
-            exchange_id = (r.get("exchange_id") or ex_cfg.get("exchange_id") or ex_cfg.get("exchangeId") or "").strip().lower()
-            notify_channels = _as_list((notify_cfg or {}).get("channels"))
-            if not notify_channels:
-                notify_channels = ["browser"]
-            market_type = (r.get("market_type") or r.get("strategy_market_type") or ex_cfg.get("market_type") or ex_cfg.get("marketType") or "").strip().lower()
-            market_category = str(r.get("strategy_market_category") or "").strip().lower()
-            execution_mode = str(r.get("strategy_execution_mode") or r.get("execution_mode") or "").strip().lower()
+                filled_amount = float(r.get("filled") or 0.0)
+                filled_price = float(r.get("avg_price") or 0.0) if float(r.get("avg_price") or 0.0) > 0 else float(r.get("price") or 0.0)
 
-            # If non-crypto markets are "signal-only", show SIGNAL instead of blank exchange.
-            exchange_display = exchange_id
-            if not exchange_display:
-                if execution_mode == "signal" or (market_category and market_category != "crypto"):
-                    exchange_display = "signal"
+                ex_cfg = _safe_json_loads(r.get("strategy_exchange_config"), {}) or {}
+                notify_cfg = _safe_json_loads(r.get("strategy_notification_config"), {}) or {}
+                exchange_id = (r.get("exchange_id") or ex_cfg.get("exchange_id") or ex_cfg.get("exchangeId") or "").strip().lower()
+                notify_channels = _as_list((notify_cfg or {}).get("channels"))
+                if not notify_channels:
+                    notify_channels = ["browser"]
+                market_type = (r.get("market_type") or r.get("strategy_market_type") or ex_cfg.get("market_type") or ex_cfg.get("marketType") or "").strip().lower()
+                market_category = str(r.get("strategy_market_category") or "").strip().lower()
+                execution_mode = str(r.get("strategy_execution_mode") or r.get("execution_mode") or "").strip().lower()
 
-            out.append(
-                {
-                    **r,
-                    "strategy_name": r.get("strategy_name") or "",
-                    "status": status,
-                    "filled_amount": filled_amount,
-                    "filled_price": filled_price,
-                    "error_message": r.get("last_error") or "",
-                    "exchange_id": exchange_id,
-                    "exchange_display": exchange_display,
-                    "notify_channels": notify_channels,
-                    "market_type": market_type or (r.get("market_type") or ""),
-                    # Format datetime fields for JSON serialization
-                    "created_at": _format_datetime(r.get("created_at")),
-                    "updated_at": _format_datetime(r.get("updated_at")),
-                    "executed_at": _format_datetime(r.get("executed_at")),
-                    "processed_at": _format_datetime(r.get("processed_at")),
-                    "sent_at": _format_datetime(r.get("sent_at")),
-                }
-            )
+                exchange_display = exchange_id
+                if not exchange_display:
+                    if execution_mode == "signal" or (market_category and market_category != "crypto"):
+                        exchange_display = "signal"
 
-        # Never expose these strategy-level config blobs.
-        for item in out:
-            try:
-                item.pop("strategy_exchange_config", None)
-                item.pop("strategy_notification_config", None)
-                item.pop("strategy_market_type", None)
-                item.pop("strategy_market_category", None)
-                item.pop("strategy_execution_mode", None)
-            except Exception:
-                pass
+                out.append(
+                    {
+                        **r,
+                        "strategy_name": r.get("strategy_name") or "",
+                        "status": status,
+                        "filled_amount": filled_amount,
+                        "filled_price": filled_price,
+                        "error_message": r.get("last_error") or "",
+                        "exchange_id": exchange_id,
+                        "exchange_display": exchange_display,
+                        "notify_channels": notify_channels,
+                        "market_type": market_type or (r.get("market_type") or ""),
+                        "created_at": _format_datetime(r.get("created_at")),
+                        "updated_at": _format_datetime(r.get("updated_at")),
+                        "executed_at": _format_datetime(r.get("executed_at")),
+                        "processed_at": _format_datetime(r.get("processed_at")),
+                        "sent_at": _format_datetime(r.get("sent_at")),
+                    }
+                )
 
-        return jsonify(
-            {
-                "code": 1,
-                "msg": "success",
-                "data": {
-                    "list": out,
-                    "page": page,
-                    "pageSize": page_size,
-                    "total": total,
-                },
+            for item in out:
+                try:
+                    item.pop("strategy_exchange_config", None)
+                    item.pop("strategy_notification_config", None)
+                    item.pop("strategy_market_type", None)
+                    item.pop("strategy_market_category", None)
+                    item.pop("strategy_execution_mode", None)
+                except Exception:
+                    pass
+
+            return {
+                "list": out,
+                "page": page,
+                "pageSize": page_size,
+                "total": total,
             }
+
+        data = guarded_cached(
+            cache_key("pending_orders", user_id, page, page_size),
+            _compute_pending_orders,
+            ttl_sec=5,
+            stale_ttl_sec=60,
+            timeout_sec=4,
+            namespace="pending_orders",
+            max_concurrent=8,
         )
+        return jsonify({"code": 1, "msg": "success", "data": data})
+    except RequestGuardError as e:
+        return jsonify({"code": 0, "msg": str(e), "data": None}), e.status_code
     except Exception as e:
         logger.error(f"dashboard pendingOrders failed: {e}", exc_info=True)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
-@dashboard_bp.route("/pendingOrders/<int:order_id>", methods=["DELETE"])
+@dashboard_blp.route("/pendingOrders/<int:order_id>", methods=["DELETE"])
 @login_required
 def delete_pending_order(order_id: int):
     """
@@ -788,3 +793,6 @@ def delete_pending_order(order_id: int):
     except Exception as e:
         logger.error(f"dashboard delete pendingOrders failed: {e}", exc_info=True)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
+
+# openapi-compat: legacy import name
+dashboard_bp = dashboard_blp

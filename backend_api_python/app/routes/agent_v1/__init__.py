@@ -37,12 +37,18 @@ def register(app) -> None:
     from . import health  # noqa: F401
     from . import markets  # noqa: F401
     from . import strategies  # noqa: F401
+    from . import strategy_sources  # noqa: F401
     from . import backtests  # noqa: F401
-    from . import experiments  # noqa: F401
     from . import portfolio  # noqa: F401
+    from . import runtime  # noqa: F401
     from . import quick_trade  # noqa: F401
     from . import jobs as jobs_module  # noqa: F401
+    from . import indicators  # noqa: F401
+    from . import research  # noqa: F401
+    from . import trading_data  # noqa: F401
+    from . import notifications  # noqa: F401
     from . import admin  # noqa: F401
+    from . import me_tokens  # noqa: F401
 
     app.register_blueprint(agent_v1_bp, url_prefix="/api/agent/v1")
     logger.info("Agent Gateway v1 mounted at /api/agent/v1")

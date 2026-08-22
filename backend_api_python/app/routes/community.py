@@ -1,10 +1,12 @@
 """
-Community APIs - 指标社区接口
+Community APIs — indicator marketplace.
 
-提供指标市场、购买、评论等功能的 REST API。
+REST endpoints for marketplace listings, purchases, comments, author dashboard,
+and admin review.
 """
 
-from flask import Blueprint, jsonify, request, g
+from flask import g, jsonify, request
+from app.openapi.blueprint import HumanBlueprint as Blueprint
 
 from app.utils.auth import login_required
 from app.utils.logger import get_logger
@@ -12,28 +14,31 @@ from app.services.community_service import get_community_service
 
 logger = get_logger(__name__)
 
-community_bp = Blueprint("community", __name__)
+community_blp = Blueprint("community", __name__)
 
 
 # ==========================================
-# 指标市场
+# Marketplace
 # ==========================================
 
-@community_bp.route("/indicators", methods=["GET"])
+@community_blp.route("/indicators", methods=["GET"])
 @login_required
 def get_market_indicators():
     """
-    获取市场指标列表
-    
+    List published marketplace indicators.
+
     Query params:
-        page: 页码 (default 1)
-        page_size: 每页数量 (default 12)
-        keyword: 搜索关键词
-        pricing_type: 'free' / 'paid' / 空(全部)
+        page: Page number (default 1)
+        page_size: Page size (default 12)
+        keyword: Search keyword
+        pricing_type: 'free' / 'paid' / empty (all)
+        vip_free: 1/true to show VIP-free paid assets only
+        code_visibility: 'visible' / 'hidden' / empty (all)
+        min_price, max_price: Numeric price bounds
         sort_by: 'score' (default) / 'newest' / 'hot' / 'price_asc' /
                  'price_desc' / 'rating'.
-                 'score' sorts by the composite multi-factor backtest score
-                 (see services/experiment/scoring.py) and is now the
+                 'score' sorts by the composite Strategy API V2 backtest score
+                 (see services/community_kpis.py) and is now the
                  default — putting genuinely well-performing indicators
                  at the top of the marketplace, not just the newest ones.
     """
@@ -42,13 +47,28 @@ def get_market_indicators():
         page_size = int(request.args.get('page_size', 12))
         keyword = request.args.get('keyword', '').strip()
         pricing_type = request.args.get('pricing_type', '').strip() or None
+        vip_free_raw = request.args.get('vip_free', '').strip().lower()
+        vip_free = vip_free_raw in ('1', 'true', 'yes', 'y', 'on')
+        code_visibility = request.args.get('code_visibility', '').strip().lower() or None
+        def _parse_price_bound(value):
+            value = (value or '').strip()
+            if not value:
+                return None
+            try:
+                parsed = float(value)
+                return parsed if parsed >= 0 else None
+            except (TypeError, ValueError):
+                return None
+
+        min_price = _parse_price_bound(request.args.get('min_price'))
+        max_price = _parse_price_bound(request.args.get('max_price'))
+        if min_price is not None and max_price is not None and min_price > max_price:
+            min_price, max_price = max_price, min_price
         sort_by = request.args.get('sort_by', 'score').strip()
+        asset_type = request.args.get('asset_type', '').strip() or None
         
-        # 限制每页数量
         page_size = min(max(page_size, 1), 50)
         
-        # 多语言：前端在 request.js 自动带 X-App-Lang + Accept-Language。
-        # 优先用 X-App-Lang（前端 UI 语言），fallback 到 Accept-Language 第一个值。
         accept_lang = (
             request.headers.get('X-App-Lang')
             or request.headers.get('Accept-Language', '').split(',')[0].strip()
@@ -61,9 +81,14 @@ def get_market_indicators():
             page_size=page_size,
             keyword=keyword if keyword else None,
             pricing_type=pricing_type,
+            vip_free=vip_free,
+            code_visibility=code_visibility,
+            min_price=min_price,
+            max_price=max_price,
             sort_by=sort_by,
             user_id=g.user_id,
             accept_language=accept_lang,
+            asset_type=asset_type,
         )
         
         return jsonify({'code': 1, 'msg': 'success', 'data': result})
@@ -73,10 +98,10 @@ def get_market_indicators():
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@community_bp.route("/indicators/<int:indicator_id>", methods=["GET"])
+@community_blp.route("/indicators/<int:indicator_id>", methods=["GET"])
 @login_required
 def get_indicator_detail(indicator_id: int):
-    """获取指标详情"""
+    """Get marketplace indicator detail."""
     try:
         accept_lang = (
             request.headers.get('X-App-Lang')
@@ -101,20 +126,20 @@ def get_indicator_detail(indicator_id: int):
 
 
 # ==========================================
-# 购买功能
+# Purchases
 # ==========================================
 
-@community_bp.route("/indicators/<int:indicator_id>/purchase", methods=["POST"])
+@community_blp.route("/indicators/<int:indicator_id>/purchase", methods=["POST"])
 @login_required
 def purchase_indicator(indicator_id: int):
     """
-    购买指标
-    
-    会自动：
-    1. 检查积分是否充足
-    2. 扣除买家积分，增加卖家积分
-    3. 创建购买记录
-    4. 复制指标到买家账户
+    Purchase a marketplace indicator.
+
+    Side effects:
+        1. Verify buyer has enough credits
+        2. Debit buyer credits and credit seller
+        3. Create purchase record
+        4. Copy indicator into buyer account
     """
     try:
         service = get_community_service()
@@ -133,19 +158,19 @@ def purchase_indicator(indicator_id: int):
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@community_bp.route("/indicators/<int:indicator_id>/sync", methods=["POST"])
+@community_blp.route("/indicators/<int:indicator_id>/sync", methods=["POST"])
 @login_required
 def sync_purchased_indicator(indicator_id: int):
     """
-    同步已购买指标的最新代码
+    Sync latest code for a purchased indicator.
 
-    适用场景：
-        发布者在上架后又更新了指标代码，已购用户需要
-        手动拉取最新版本到自己的本地副本。
+    Use when the publisher updated code after the buyer purchased; the buyer
+    pulls the newest version into their local copy.
 
-    前置条件：
-        - 调用者必须已购买该指标
-        - 原始指标仍处于已发布状态
+    Preconditions:
+        - Caller must have purchased the indicator
+        - Published listings sync from the latest marketplace code
+        - Unpublished/deleted listings can still restore from the purchase snapshot
     """
     try:
         service = get_community_service()
@@ -157,9 +182,13 @@ def sync_purchased_indicator(indicator_id: int):
         if success:
             return jsonify({'code': 1, 'msg': message, 'data': data})
         else:
-            # 不同失败场景给到可区分的 http 状态，便于前端处理
             status = 400
-            if message in ('indicator_not_found', 'indicator_unpublished', 'local_copy_not_found'):
+            if message in (
+                'indicator_not_found',
+                'indicator_unpublished',
+                'indicator_unavailable',
+                'local_copy_not_found',
+            ):
                 status = 404
             elif message == 'not_purchased':
                 status = 403
@@ -170,10 +199,10 @@ def sync_purchased_indicator(indicator_id: int):
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@community_bp.route("/my-purchases", methods=["GET"])
+@community_blp.route("/my-purchases", methods=["GET"])
 @login_required
 def get_my_purchases():
-    """获取我购买的指标列表"""
+    """List indicators purchased by the current user."""
     try:
         page = int(request.args.get('page', 1))
         page_size = int(request.args.get('page_size', 20))
@@ -194,17 +223,13 @@ def get_my_purchases():
 
 
 # ==========================================
-# 作者后台 (Author Dashboard)
-#
-# 普通用户上传指标到市场后，需要一个轻量的「我的发布 / 销量 / 收入 / 评分」
-# 概览页。这三个端点都按 g.user_id 过滤，不会泄露其它作者数据。
-# 实现细节见 services/community_service.py 的同名方法。
+# Author dashboard
 # ==========================================
 
-@community_bp.route("/author/summary", methods=["GET"])
+@community_blp.route("/author/summary", methods=["GET"])
 @login_required
 def get_author_summary():
-    """作者总览：发布数 / 已通过 / 待审核 / 总销量 / 总收入 / 平均评分。"""
+    """Author overview: published / approved / pending / sales / revenue / avg rating."""
     try:
         service = get_community_service()
         result = service.get_author_summary(user_id=g.user_id)
@@ -214,10 +239,10 @@ def get_author_summary():
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@community_bp.route("/author/published", methods=["GET"])
+@community_blp.route("/author/published", methods=["GET"])
 @login_required
 def get_author_published():
-    """作者发布的指标列表 + 每条销量/收入/评分。"""
+    """List indicators published by the author with per-item sales, revenue, and rating."""
     try:
         page = int(request.args.get('page', 1))
         page_size = int(request.args.get('page_size', 20))
@@ -235,10 +260,10 @@ def get_author_published():
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@community_bp.route("/author/sales", methods=["GET"])
+@community_blp.route("/author/sales", methods=["GET"])
 @login_required
 def get_author_sales():
-    """作者销售明细：按购买记录分页，可选 indicator_id 过滤。"""
+    """Paginated author sales ledger; optional indicator_id filter."""
     try:
         page = int(request.args.get('page', 1))
         page_size = int(request.args.get('page_size', 20))
@@ -259,14 +284,36 @@ def get_author_sales():
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
+@community_blp.route("/author/indicators/<int:indicator_id>/unpublish", methods=["POST"])
+@login_required
+def author_unpublish_indicator(indicator_id: int):
+    """Let an author unpublish their own marketplace asset."""
+    try:
+        data = request.get_json() or {}
+        note = (data.get("note") or "").strip()
+        service = get_community_service()
+        success, message = service.author_unpublish_asset(
+            user_id=g.user_id,
+            indicator_id=indicator_id,
+            note=note,
+        )
+        if success:
+            return jsonify({'code': 1, 'msg': message, 'data': None})
+        status = 404 if message == 'indicator_not_found' else 400
+        return jsonify({'code': 0, 'msg': message, 'data': None}), status
+    except Exception as e:
+        logger.error(f"author_unpublish_indicator failed: {e}")
+        return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
+
+
 # ==========================================
-# 评论功能
+# Comments
 # ==========================================
 
-@community_bp.route("/indicators/<int:indicator_id>/comments", methods=["GET"])
+@community_blp.route("/indicators/<int:indicator_id>/comments", methods=["GET"])
 @login_required
 def get_comments(indicator_id: int):
-    """获取指标评论列表"""
+    """List comments for an indicator."""
     try:
         page = int(request.args.get('page', 1))
         page_size = int(request.args.get('page_size', 20))
@@ -286,17 +333,17 @@ def get_comments(indicator_id: int):
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@community_bp.route("/indicators/<int:indicator_id>/comments", methods=["POST"])
+@community_blp.route("/indicators/<int:indicator_id>/comments", methods=["POST"])
 @login_required
 def add_comment(indicator_id: int):
     """
-    添加评论
-    
+    Add a comment.
+
     Request body:
-        rating: 1-5 星评分
-        content: 评论内容（可选，最多500字）
-    
-    注意：只有购买过的用户可以评论，且只能评论一次
+        rating: 1-5 star rating
+        content: Optional comment text (max 500 chars)
+
+    Only purchasers may comment, and only once per indicator.
     """
     try:
         data = request.get_json() or {}
@@ -321,15 +368,15 @@ def add_comment(indicator_id: int):
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@community_bp.route("/indicators/<int:indicator_id>/comments/<int:comment_id>", methods=["PUT"])
+@community_blp.route("/indicators/<int:indicator_id>/comments/<int:comment_id>", methods=["PUT"])
 @login_required
 def update_comment(indicator_id: int, comment_id: int):
     """
-    更新评论（只能修改自己的评论）
-    
+    Update own comment.
+
     Request body:
-        rating: 1-5 星评分
-        content: 评论内容（最多500字）
+        rating: 1-5 star rating
+        content: Comment text (max 500 chars)
     """
     try:
         data = request.get_json() or {}
@@ -355,10 +402,10 @@ def update_comment(indicator_id: int, comment_id: int):
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@community_bp.route("/indicators/<int:indicator_id>/my-comment", methods=["GET"])
+@community_blp.route("/indicators/<int:indicator_id>/my-comment", methods=["GET"])
 @login_required
 def get_my_comment(indicator_id: int):
-    """获取当前用户对指定指标的评论（用于编辑）"""
+    """Get current user's comment on an indicator (for edit form)."""
     try:
         service = get_community_service()
         result = service.get_user_comment(
@@ -374,13 +421,13 @@ def get_my_comment(indicator_id: int):
 
 
 # ==========================================
-# 实盘表现
+# Market performance
 # ==========================================
 
-@community_bp.route("/indicators/<int:indicator_id>/performance", methods=["GET"])
+@community_blp.route("/indicators/<int:indicator_id>/performance", methods=["GET"])
 @login_required
 def get_indicator_performance(indicator_id: int):
-    """获取指标的实盘表现统计"""
+    """Get marketplace performance statistics for an asset."""
     try:
         service = get_community_service()
         result = service.get_indicator_performance(indicator_id)
@@ -393,25 +440,29 @@ def get_indicator_performance(indicator_id: int):
 
 
 # ==========================================
-# 管理员审核功能
+# Admin review
 # ==========================================
 
 def _is_admin():
-    """检查当前用户是否是管理员"""
+    """Return True when the current user is an admin."""
     role = getattr(g, 'user_role', None)
     return role == 'admin'
 
 
-@community_bp.route("/admin/pending-indicators", methods=["GET"])
+@community_blp.route("/admin/pending-indicators", methods=["GET"])
 @login_required
 def get_pending_indicators():
     """
-    获取待审核的指标列表（管理员专用）
-    
+    List indicators pending review (admin only).
+
     Query params:
-        page: 页码 (default 1)
-        page_size: 每页数量 (default 20)
+        page: Page number (default 1)
+        page_size: Page size (default 20)
         review_status: 'pending' / 'approved' / 'rejected' / 'all'
+        keyword: Search name, description or author
+        asset_type: 'indicator' / 'script_template' / empty
+        pricing_type: 'free' / 'paid' / 'vip_free' / empty
+        sort_by: 'newest' / 'oldest' / 'price_asc' / 'price_desc'
     """
     try:
         if not _is_admin():
@@ -420,13 +471,21 @@ def get_pending_indicators():
         page = int(request.args.get('page', 1))
         page_size = int(request.args.get('page_size', 20))
         review_status = request.args.get('review_status', 'pending').strip() or 'pending'
+        keyword = request.args.get('keyword', '').strip() or None
+        asset_type = request.args.get('asset_type', '').strip() or None
+        pricing_type = request.args.get('pricing_type', '').strip() or None
+        sort_by = request.args.get('sort_by', 'newest').strip() or 'newest'
         page_size = min(max(page_size, 1), 100)
         
         service = get_community_service()
         result = service.get_pending_indicators(
             page=page,
             page_size=page_size,
-            review_status=review_status
+            review_status=review_status,
+            keyword=keyword,
+            asset_type=asset_type,
+            pricing_type=pricing_type,
+            sort_by=sort_by,
         )
         
         return jsonify({'code': 1, 'msg': 'success', 'data': result})
@@ -436,10 +495,10 @@ def get_pending_indicators():
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@community_bp.route("/admin/review-stats", methods=["GET"])
+@community_blp.route("/admin/review-stats", methods=["GET"])
 @login_required
 def get_review_stats():
-    """获取审核统计数据（管理员专用）"""
+    """Review queue statistics (admin only)."""
     try:
         if not _is_admin():
             return jsonify({'code': 0, 'msg': 'admin_required', 'data': None}), 403
@@ -454,15 +513,15 @@ def get_review_stats():
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@community_bp.route("/admin/indicators/<int:indicator_id>/review", methods=["POST"])
+@community_blp.route("/admin/indicators/<int:indicator_id>/review", methods=["POST"])
 @login_required
 def review_indicator(indicator_id: int):
     """
-    审核指标（管理员专用）
-    
+    Approve or reject an indicator (admin only).
+
     Request body:
         action: 'approve' / 'reject'
-        note: 审核备注（可选）
+        note: Optional review note
     """
     try:
         if not _is_admin():
@@ -493,14 +552,14 @@ def review_indicator(indicator_id: int):
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@community_bp.route("/admin/indicators/<int:indicator_id>/unpublish", methods=["POST"])
+@community_blp.route("/admin/indicators/<int:indicator_id>/unpublish", methods=["POST"])
 @login_required
 def unpublish_indicator(indicator_id: int):
     """
-    下架指标（管理员专用）
-    
+    Unpublish an indicator (admin only).
+
     Request body:
-        note: 下架原因（可选）
+        note: Optional unpublish reason
     """
     try:
         if not _is_admin():
@@ -526,10 +585,10 @@ def unpublish_indicator(indicator_id: int):
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@community_bp.route("/admin/indicators/<int:indicator_id>", methods=["DELETE"])
+@community_blp.route("/admin/indicators/<int:indicator_id>", methods=["DELETE"])
 @login_required
 def admin_delete_indicator(indicator_id: int):
-    """删除指标（管理员专用）"""
+    """Delete an indicator (admin only)."""
     try:
         if not _is_admin():
             return jsonify({'code': 0, 'msg': 'admin_required', 'data': None}), 403
@@ -548,3 +607,7 @@ def admin_delete_indicator(indicator_id: int):
     except Exception as e:
         logger.error(f"admin_delete_indicator failed: {e}")
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
+
+
+# openapi-compat: legacy import name
+community_bp = community_blp

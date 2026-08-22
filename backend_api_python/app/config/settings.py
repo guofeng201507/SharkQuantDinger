@@ -1,11 +1,16 @@
-"""
-应用主配置
-"""
+"""Application settings."""
 import os
 
+
+_INSECURE_SECRET_KEYS = {
+    "quantdinger-secret-key-change-me",
+}
+# Compatibility floor for installations upgraded from releases that used
+# shorter session keys. New deployments should still generate 32 random bytes.
+_MIN_SECRET_KEY_BYTES = 10
+
+
 class MetaConfig(type):
-    # ==================== 服务配置 ====================
-    # 服务启动参数通常由环境变量或命令行参数决定，不建议从数据库读取
     
     @property
     def HOST(cls):
@@ -27,10 +32,19 @@ class MetaConfig(type):
     def VERSION(cls):
         return '2.0.0'
 
-    # ==================== 认证配置 ====================
     @property
     def SECRET_KEY(cls):
-        return os.getenv('SECRET_KEY', 'quantdinger-secret-key-change-me')
+        secret = (os.getenv('SECRET_KEY') or '').strip()
+        if not secret or secret in _INSECURE_SECRET_KEYS:
+            raise RuntimeError(
+                'SECRET_KEY must be set to a unique random value. Generate one with: '
+                'python -c "import secrets; print(secrets.token_hex(32))"'
+            )
+        if len(secret.encode('utf-8')) < _MIN_SECRET_KEY_BYTES:
+            raise RuntimeError(
+                f'SECRET_KEY must contain at least {_MIN_SECRET_KEY_BYTES} bytes'
+            )
+        return secret
 
     @property
     def ADMIN_USER(cls):
@@ -40,8 +54,6 @@ class MetaConfig(type):
     def ADMIN_PASSWORD(cls):
         return os.getenv('ADMIN_PASSWORD', '123456')
 
-    # ==================== 日志配置 ====================
-    # 日志配置通常在应用启动最早阶段需要，建议保持环境变量
     
     @property
     def LOG_LEVEL(cls):
@@ -63,7 +75,6 @@ class MetaConfig(type):
     def LOG_BACKUP_COUNT(cls):
         return int(os.getenv('LOG_BACKUP_COUNT', 5))
 
-    # ==================== 安全配置 ====================
 
     @property
     def RATE_LIMIT(cls):
@@ -71,7 +82,6 @@ class MetaConfig(type):
         val = load_addon_config().get('app', {}).get('rate_limit')
         return int(val) if val is not None else int(os.getenv('RATE_LIMIT', 100))
 
-    # ==================== 功能开关 ====================
 
     @property
     def ENABLE_CACHE(cls):
@@ -90,9 +100,9 @@ class MetaConfig(type):
         return os.getenv('ENABLE_REQUEST_LOG', 'True').lower() == 'true'
 
 class Config(metaclass=MetaConfig):
-    """应用配置类"""
+    """Application configuration."""
     
     @classmethod
     def get_log_path(cls) -> str:
-        """获取日志文件完整路径"""
+        """Return the full log file path."""
         return os.path.join(cls.LOG_DIR, cls.LOG_FILE)

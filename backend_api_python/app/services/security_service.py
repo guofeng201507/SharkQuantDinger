@@ -3,9 +3,12 @@ Security Service - Handles Turnstile verification, rate limiting, and brute-forc
 """
 import os
 import json
+import hashlib
 import requests
 from datetime import datetime, timedelta
 from typing import Tuple, Optional, Dict, Any
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from app.config.settings import Config
 from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
 
@@ -13,6 +16,28 @@ logger = get_logger(__name__)
 
 # Singleton instance
 _security_service = None
+
+_TURNSTILE_PLACEHOLDER_VALUES = {
+    '',
+    '0',
+    'false',
+    'none',
+    'null',
+    'test',
+    'dummy',
+    'placeholder',
+    'changeme',
+    'change-me',
+    'quantdinger',
+    'your-turnstile-site-key',
+    'your-turnstile-secret-key',
+}
+
+
+def _is_placeholder_turnstile_value(value: str) -> bool:
+    """Return True for local/demo placeholders that should not enable Turnstile."""
+    normalized = (value or '').strip().lower()
+    return normalized in _TURNSTILE_PLACEHOLDER_VALUES
 
 
 def get_security_service():
@@ -32,9 +57,18 @@ class SecurityService:
     def _load_config(self):
         """Load security configuration from environment variables"""
         # Turnstile config
-        self.turnstile_site_key = os.getenv('TURNSTILE_SITE_KEY', '')
-        self.turnstile_secret_key = os.getenv('TURNSTILE_SECRET_KEY', '')
-        self.turnstile_enabled = bool(self.turnstile_site_key and self.turnstile_secret_key)
+        self.turnstile_site_key = (os.getenv('TURNSTILE_SITE_KEY', '') or '').strip()
+        self.turnstile_secret_key = (os.getenv('TURNSTILE_SECRET_KEY', '') or '').strip()
+        self.turnstile_enabled = bool(
+            self.turnstile_site_key
+            and self.turnstile_secret_key
+            and not _is_placeholder_turnstile_value(self.turnstile_site_key)
+            and not _is_placeholder_turnstile_value(self.turnstile_secret_key)
+        )
+        if (self.turnstile_site_key or self.turnstile_secret_key) and not self.turnstile_enabled:
+            logger.warning(
+                "Turnstile is disabled because its site key or secret key is empty/a placeholder."
+            )
         
         # IP rate limit config
         self.ip_max_attempts = int(os.getenv('SECURITY_IP_MAX_ATTEMPTS', '10'))
@@ -49,6 +83,11 @@ class SecurityService:
         # Verification code rate limit
         self.code_rate_limit_seconds = int(os.getenv('VERIFICATION_CODE_RATE_LIMIT', '60'))
         self.code_ip_hourly_limit = int(os.getenv('VERIFICATION_CODE_IP_HOURLY_LIMIT', '10'))
+        self.turnstile_clearance_ttl_seconds = int(os.getenv('TURNSTILE_CLEARANCE_TTL_SECONDS', '600'))
+        self._turnstile_clearance_serializer = URLSafeTimedSerializer(
+            Config.SECRET_KEY,
+            salt='turnstile-clearance-v1',
+        )
     
     def get_security_config(self) -> Dict[str, Any]:
         """Get public security config for frontend"""
@@ -58,6 +97,8 @@ class SecurityService:
             'turnstile_enabled': self.turnstile_enabled,
             'turnstile_site_key': self.turnstile_site_key,
             'registration_enabled': os.getenv('ENABLE_REGISTRATION', 'true').lower() == 'true',
+            'mfa_enabled': os.getenv('MFA_ENABLED', 'false').lower() == 'true',
+            'mfa_risk_login_only': os.getenv('MFA_RISK_LOGIN_ONLY', 'true').lower() == 'true',
             'oauth_google_enabled': bool(os.getenv('GOOGLE_CLIENT_ID', '')),
             'oauth_github_enabled': bool(os.getenv('GITHUB_CLIENT_ID', '')),
             # Mobile in-app version check (semver-ish string, e.g. 1.0.1)
@@ -107,6 +148,53 @@ class SecurityService:
             # On API error, we might want to allow (fail-open) or deny (fail-closed)
             # For security, we'll deny
             return False, 'Turnstile service unavailable'
+
+    def _turnstile_ip_hash(self, ip_address: str = None) -> str:
+        ip = str(ip_address or '').strip()
+        return hashlib.sha256(ip.encode('utf-8')).hexdigest()
+
+    def issue_turnstile_clearance(self, ip_address: str = None) -> str:
+        """Issue a short-lived local clearance after a valid Turnstile challenge."""
+        payload = {
+            'ip': self._turnstile_ip_hash(ip_address),
+            'purpose': 'auth',
+        }
+        return self._turnstile_clearance_serializer.dumps(payload)
+
+    def verify_turnstile_clearance(self, clearance: str, ip_address: str = None) -> Tuple[bool, str]:
+        """Verify the short-lived local clearance token."""
+        if not self.turnstile_enabled:
+            return True, 'turnstile_disabled'
+        if not clearance:
+            return False, 'missing_clearance'
+        try:
+            payload = self._turnstile_clearance_serializer.loads(
+                clearance,
+                max_age=max(1, self.turnstile_clearance_ttl_seconds),
+            )
+        except SignatureExpired:
+            return False, 'turnstile_clearance_expired'
+        except BadSignature:
+            return False, 'turnstile_clearance_invalid'
+        if not isinstance(payload, dict) or payload.get('purpose') != 'auth':
+            return False, 'turnstile_clearance_invalid'
+        if payload.get('ip') != self._turnstile_ip_hash(ip_address):
+            return False, 'turnstile_clearance_invalid'
+        return True, 'verified'
+
+    def verify_turnstile_or_clearance(
+        self,
+        token: str = '',
+        clearance: str = '',
+        ip_address: str = None,
+    ) -> Tuple[bool, str]:
+        """Accept either a fresh Turnstile token or a local short-lived clearance."""
+        if not self.turnstile_enabled:
+            return True, 'turnstile_disabled'
+        clearance_ok, clearance_msg = self.verify_turnstile_clearance(clearance, ip_address)
+        if clearance_ok:
+            return True, clearance_msg
+        return self.verify_turnstile(token, ip_address)
     
     # =========================================================================
     # Rate Limiting & Brute-Force Protection
