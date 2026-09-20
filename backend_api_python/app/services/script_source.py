@@ -12,6 +12,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
+from app.services.strategy_params import canonical_strategy_param_schema
 from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
 
@@ -249,7 +250,10 @@ class ScriptSourceService:
         code = str(payload.get("code") or "")
         description = str(payload.get("description") or "")
         template_key = str(payload.get("template_key") or payload.get("templateKey") or "")
-        param_schema = payload.get("param_schema") or payload.get("paramSchema") or {}
+        param_schema = canonical_strategy_param_schema(
+            code,
+            payload.get("param_schema") or payload.get("paramSchema") or {},
+        )
         metadata = payload.get("metadata") or {}
         asset_type = _source_asset_type(payload.get("asset_type") or payload.get("assetType"))
         source_marketplace_indicator_id = payload.get("source_marketplace_indicator_id") or payload.get("sourceMarketplaceIndicatorId")
@@ -304,7 +308,12 @@ class ScriptSourceService:
         code = str(payload.get("code") if payload.get("code") is not None else existing.get("code") or "")
         description = str(payload.get("description") if payload.get("description") is not None else existing.get("description") or "")
         template_key = str(payload.get("template_key") or payload.get("templateKey") or existing.get("template_key") or "")
-        param_schema = payload.get("param_schema") if "param_schema" in payload else payload.get("paramSchema", existing.get("param_schema") or {})
+        param_schema = canonical_strategy_param_schema(
+            code,
+            payload.get("param_schema")
+            if "param_schema" in payload
+            else payload.get("paramSchema", existing.get("param_schema") or {}),
+        )
         metadata = payload.get("metadata") if "metadata" in payload else existing.get("metadata") or {}
         asset_type = _source_asset_type(
             payload.get("asset_type") if "asset_type" in payload
@@ -385,6 +394,24 @@ class ScriptSourceService:
             )
             row = cur.fetchone()
             db.commit()
+            cur.close()
+        return self._version_row(row)
+
+    def get_latest_version(self, source_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                """
+                SELECT id, source_id, user_id, version_no, name, description, code,
+                       template_key, param_schema, metadata, created_at
+                FROM qd_script_source_versions
+                WHERE source_id = ? AND user_id = ?
+                ORDER BY version_no DESC
+                LIMIT 1
+                """,
+                (int(source_id), int(user_id)),
+            )
+            row = cur.fetchone()
             cur.close()
         return self._version_row(row)
 

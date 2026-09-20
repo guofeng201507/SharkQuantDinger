@@ -233,6 +233,7 @@ def get_positions():
             try:
                 from app.services.exchange_execution import resolve_exchange_config
                 from app.services.live_trading.account_positions import (
+                    filter_position_rows_by_symbols,
                     list_account_positions,
                     list_strategy_allocations_for_account,
                     reconcile_strategy_vs_account,
@@ -240,6 +241,8 @@ def get_positions():
                 from app.services.live_trading.leg_context import credential_id_from_exchange_config
 
                 resolved_ex = resolve_exchange_config(exchange_config, user_id=int(user_id or 1))
+                if str(resolved_ex.get("exchange_id") or "").lower() == "alpaca":
+                    market_type = "spot"
                 cred_id = int(
                     credential_id_from_exchange_config(resolved_ex)
                     or credential_id_from_exchange_config(exchange_config)
@@ -267,16 +270,13 @@ def get_positions():
                     credential_id=cred_id if cred_id > 0 else None,
                     market_type=market_type,
                 )
-                if allowed:
-                    account_rows = [
-                        r for r in account_rows
-                        if normalize_strategy_symbol(str(r.get("symbol") or "")).upper() in allowed_upper
-                    ]
+                account_rows = filter_position_rows_by_symbols(account_rows, allowed)
                 allocated_rows = list_strategy_allocations_for_account(
                     user_id=int(user_id),
                     credential_id=cred_id,
                     market_type=market_type,
                     allowed_symbols=allowed,
+                    exchange_id=str(resolved_ex.get("exchange_id") or ""),
                 )
                 from app.services.live_trading.position_ownership import (
                     build_ownership_rows,
@@ -288,6 +288,7 @@ def get_positions():
                     credential_id=cred_id,
                     market_type=market_type,
                 )
+                protected_rows = filter_position_rows_by_symbols(protected_rows, allowed)
                 account_reconciliation = reconcile_strategy_vs_account(
                     out,
                     account_rows,
@@ -335,27 +336,6 @@ def get_positions():
         }
 
         exchange_snapshot = None
-        account_risk = None
-        if execution_mode == "live":
-            try:
-                from app.services.exchange_execution import resolve_exchange_config
-                from app.services.live_trading.account_risk import (
-                    account_risk_limits,
-                    account_risk_snapshot,
-                )
-                from app.services.live_trading.leg_context import credential_id_from_exchange_config
-
-                resolved_ex = resolve_exchange_config(exchange_config, user_id=int(user_id or 1))
-                cred_id = int(credential_id_from_exchange_config(resolved_ex) or 0)
-                account_risk = account_risk_snapshot(
-                    user_id=int(user_id),
-                    credential_id=cred_id,
-                    market_type=market_type,
-                    strategy_id=int(strategy_id),
-                    limits=account_risk_limits({"trading_config": trading_config}),
-                )
-            except Exception as e:
-                account_risk = {"allowed": False, "violations": [f"accountRisk.snapshotFailed:{e}"]}
         from app.services.strategy_runtime.bot_type import resolve_bot_type
 
         bot_type = resolve_bot_type(st, trading_config)
@@ -388,7 +368,6 @@ def get_positions():
                 'position_meta': position_meta,
                 'exchange_snapshot': exchange_snapshot,
                 'account_reconciliation': account_reconciliation,
-                'account_risk': account_risk,
             },
         })
     except Exception as e:

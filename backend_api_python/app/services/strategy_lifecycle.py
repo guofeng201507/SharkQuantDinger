@@ -28,6 +28,11 @@ def is_fatal_exchange_error(msg: str) -> bool:
     if "unsupported market type" in m or "unsupported market" in m:
         return True
     tokens = (
+        # Programming/adapter contract failures are deterministic. Retrying on
+        # every candle can enqueue an entire robot order ladder without any
+        # chance of recovery until the service is upgraded.
+        "got an unexpected keyword argument",
+        "missing 1 required positional argument",
         "binance http 401",
         '"code":-2015',
         "-2015",
@@ -72,6 +77,19 @@ def is_fatal_exchange_error(msg: str) -> bool:
     return any(t in m for t in tokens)
 
 
+def is_recoverable_position_error(reason: str) -> bool:
+    return not is_fatal_exchange_error(reason) and any(code in str(reason or "").lower() for code in (
+        "position_drift_detected", "minimum_trade_unit", "min_notional",
+        "position_ownership_drift", "target_already_met",
+        "below step/min", "below lot step/minqty", "below min/precision",
+        "below mintradeusdt/precision",
+        '"code":-2022', "'code': -2022", "'code':-2022",
+        '"code":-4118', "'code': -4118", "'code':-4118",
+        "reduceonly order is rejected", "reduce only order is rejected",
+        "reduceonly order failed", "reduce only order failed",
+    ))
+
+
 def maybe_auto_stop_on_exchange_error(
     strategy_id: int,
     msg: str,
@@ -79,6 +97,7 @@ def maybe_auto_stop_on_exchange_error(
     source: str = "exchange",
     consecutive_failures: int = 0,
     consecutive_threshold: int = 5,
+    perform_stop: bool = True,
 ) -> bool:
     """
     Stop a live strategy after a fatal exchange/auth error or repeated failures.
@@ -91,14 +110,20 @@ def maybe_auto_stop_on_exchange_error(
     if not reason:
         return False
     if is_fatal_exchange_error(reason):
-        auto_stop_live_strategy(sid, reason, source=source)
+        if perform_stop:
+            auto_stop_live_strategy(sid, reason, source=source)
         return True
+    if is_recoverable_position_error(reason):
+        # Reject the individual entry/undersized order while keeping position
+        # monitoring and reduce-only protection alive.
+        return False
     if consecutive_failures >= max(1, int(consecutive_threshold or 5)):
-        auto_stop_live_strategy(
-            sid,
-            f"Repeated exchange errors ({consecutive_failures}): {reason}",
-            source=source,
-        )
+        if perform_stop:
+            auto_stop_live_strategy(
+                sid,
+                f"Repeated exchange errors ({consecutive_failures}): {reason}",
+                source=source,
+            )
         return True
     return False
 

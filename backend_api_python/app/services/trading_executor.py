@@ -12,12 +12,22 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 import pandas as pd
 
 from app.data_sources import DataSourceFactory
+from app.data_sources.errors import (
+    MarketDataUnavailableError,
+    classify_market_data_failure,
+)
 from app.services.script_source import get_script_source_service
+from app.services.ai_decision_context import build_strategy_decision_context
 from app.services.strategy_runtime.health import record_runtime_heartbeat
 from app.services.strategy_runtime.identity import ensure_strategy_run, finish_strategy_run
 from app.services.strategy_runtime.order_intents import OrderIntentService
 from app.services.strategy_runtime.state import RuntimeStateStore
+from app.services.strategy_runtime.live_portfolio import refresh_members, positions_by_symbol, available_strategy_cash, pricing_members
+from app.services.strategy_runtime.cancellations import persist_cancellations
 from app.services.strategy_runtime.timeframes import (
+    completed_bar_token,
+    daily_equity_execution_policy,
+    equity_daily_frames_ready,
     live_history_days,
     load_live_frequency_frames,
 )
@@ -31,7 +41,7 @@ from app.services.strategy_v2.live_execution import LiveOrderRequest, StrategyV2
 from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
 from app.utils.numeric_precision import format_decimal
-from app.utils.strategy_runtime_logs import append_strategy_log
+from app.utils.strategy_runtime_logs import append_strategy_log, format_market_data_log
 from app.utils.thread_capacity import format_thread_capacity
 
 
@@ -57,6 +67,7 @@ class TradingExecutor:
         self.order_gateway = StrategyV2OrderGateway()
         self._last_start_failure = ""
         self._last_exit_reason: dict[int, str] = {}
+        self.runtime_guard = None
 
     def start_strategy(self, strategy_id: int) -> bool:
         strategy_id = int(strategy_id)
@@ -74,6 +85,9 @@ class TradingExecutor:
             except Exception as exc:
                 self._last_start_failure = str(exc or "strategyV2.livePreflightFailed")
                 logger.warning("Strategy %s live preflight rejected: %s", strategy_id, exc)
+                return False
+            if self.runtime_guard and not self.runtime_guard(strategy_id):
+                self._last_start_failure = "strategyRuntime.leaseLost"
                 return False
             thread = threading.Thread(
                 target=self._run_strategy_loop,
@@ -110,6 +124,24 @@ class TradingExecutor:
         )
 
         trading_config = _json_object(strategy.get("trading_config"))
+        from app.services.exchange_execution import resolve_exchange_config
+        from app.services.market.product_catalog import (
+            validate_product_account_environment,
+            validate_runtime_products,
+        )
+
+        exchange_config = resolve_exchange_config(
+            _json_object(strategy.get("exchange_config")),
+            user_id=user_id,
+        )
+        exchange_id = str(exchange_config.get("exchange_id") or "").strip().lower()
+        validate_product_account_environment(trading_config.get("instrument_products"), exchange_config)
+        validate_runtime_products(
+            trading_config.get("instrument_products")
+            if isinstance(trading_config.get("instrument_products"), list)
+            else [],
+            credential_exchange_id=exchange_id,
+        )
         market_type = str(
             strategy.get("market_type")
             or trading_config.get("market_type")
@@ -139,14 +171,8 @@ class TradingExecutor:
         if not direction_mode:
             raise RuntimeError("strategyV2.directionModeRequired")
 
-        from app.services.exchange_execution import resolve_exchange_config
         from app.services.grid.exchange_requirements import detect_hedge_position_mode
         from app.services.live_trading.factory import create_client
-
-        exchange_config = resolve_exchange_config(
-            _json_object(strategy.get("exchange_config")),
-            user_id=user_id,
-        )
         client = create_client(exchange_config, market_type=market_type)
         is_hedge, label = detect_hedge_position_mode(
             client,
@@ -157,6 +183,8 @@ class TradingExecutor:
         owns_both_legs = direction_mode in {"both", "neutral"} or neutral_grid
         if owns_both_legs and is_hedge is not True:
             raise RuntimeError(f"strategyV2.dualDirectionHedgeModeRequired:{label}")
+        if direction_mode == "one_way" and is_hedge is True:
+            raise RuntimeError(f"strategyV2.oneWayPositionModeRequired:{label}")
         if is_hedge is not True:
             if is_hedge is None:
                 raise RuntimeError(f"strategyV2.hedgeModeUnknown:{label}")
@@ -320,11 +348,12 @@ class TradingExecutor:
         run_id = 0
         exit_reason = "strategy stopped"
         market_price_feed = None
+        state_store: RuntimeStateStore | None = None
         try:
             strategy = self._load_strategy(strategy_id)
             if not strategy:
                 raise RuntimeError("strategyV2.strategyNotFound")
-            source_id, code = self._load_source(strategy)
+            source_version_id, code = self._load_source(strategy)
             program = compile_strategy_v2(code)
             user_id = int(strategy.get("user_id") or 0)
             trading_config = _json_object(strategy.get("trading_config"))
@@ -342,7 +371,7 @@ class TradingExecutor:
             candidates, universe_id = service.resolve_candidates(
                 user_id=user_id,
                 manifest=program.manifest,
-                start_date=now - timedelta(days=7),
+                start_date=now,
                 end_date=now,
             )
             account_exchange = str(
@@ -353,10 +382,29 @@ class TradingExecutor:
                     if member.get("market") == "Crypto":
                         member["exchange_id"] = account_exchange
                         member["key"] = _member_key(member)
+                from app.services.pending_orders.live_order_support import (
+                    attach_instrument_product_contracts,
+                )
+
+                attach_instrument_product_contracts(
+                    candidates,
+                    trading_config,
+                    exchange_id=account_exchange,
+                )
+                from app.services.market.product_catalog import validate_product_account_environment
+
+                validate_product_account_environment(candidates, exchange_config)
 
             frequency = program.manifest.driving_frequency
 
             def fetch_runtime_frames() -> dict[str, dict[str, pd.DataFrame]]:
+                refresh_members(service, candidates, program.manifest, user_id, strategy_id, datetime.now(timezone.utc), account_exchange)
+                if execution_mode == "live" and account_exchange:
+                    attach_instrument_product_contracts(
+                        candidates,
+                        trading_config,
+                        exchange_id=account_exchange,
+                    )
                 return load_live_frequency_frames(
                     service=service,
                     candidates=candidates,
@@ -378,17 +426,23 @@ class TradingExecutor:
                     universe_id,
                     as_of=timestamp.date(),
                 )
+                if account_exchange:
+                    for item in members:
+                        if item.get("market") == "Crypto":
+                            item["exchange_id"] = account_exchange
                 return [_member_key(item) for item in members]
 
             frequency_frames = fetch_runtime_frames()
             frames = frequency_frames[frequency]
             runtime_price_client: Dict[str, Any] = {}
 
+            positions = {}
             def runtime_prices() -> dict[str, float]:
+                priced = pricing_members(candidates, positions)
                 if execution_mode != "live":
-                    return self._live_prices(candidates)
+                    return self._live_prices(priced)
                 return self._execution_account_prices(
-                    candidates,
+                    priced,
                     exchange_config,
                     runtime_price_client,
                 )
@@ -419,7 +473,7 @@ class TradingExecutor:
                 user_id=user_id,
                 code=code,
                 parameter_snapshot=trading_config,
-                source_version_id=str(source_id),
+                source_version_id=str(source_version_id),
                 exchange_id=str(primary.get("exchange_id") or account_exchange),
                 credential_id=int(
                     exchange_config.get("credential_id") or 0
@@ -434,11 +488,20 @@ class TradingExecutor:
             self._heartbeat(strategy_id, run_id, primary, last_prices, 0)
             from app.services.strategy_runtime.bot_type import resolve_bot_type
 
-            bot_type = resolve_bot_type(strategy, trading_config)
+            bot_type = resolve_bot_type(
+                strategy,
+                trading_config,
+                source_code=code,
+            )
             if bot_type:
                 # Keep all downstream risk helpers on the same canonical
                 # classification, including legacy executor_type deployments.
                 trading_config["bot_type"] = bot_type
+            if bot_type == "grid":
+                trading_config = self._recover_generated_grid_config(
+                    trading_config,
+                    program.namespace,
+                )
             if execution_mode == "live" and bot_type == "grid":
                 exit_reason = self._run_grid_resting_loop(
                     strategy_id=strategy_id,
@@ -469,7 +532,6 @@ class TradingExecutor:
                     rest_fallback=runtime_prices,
                 )
                 market_price_feed.start()
-                rest_runtime_prices = runtime_prices
 
                 def runtime_prices() -> dict[str, float]:
                     snapshot = market_price_feed.snapshot(
@@ -482,7 +544,7 @@ class TradingExecutor:
                         "age_ms": snapshot.age_ms,
                         "connected": snapshot.connected,
                     })
-                    return snapshot.prices or rest_runtime_prices()
+                    return snapshot.prices
             state_store = RuntimeStateStore(
                 strategy_id=strategy_id,
                 strategy_run_id=run_id,
@@ -505,13 +567,29 @@ class TradingExecutor:
 
             signal_poll = max(1.0, min(30.0, float(trading_config.get("data_poll_seconds") or 5)))
             risk_tick = max(0.25, min(5.0, float(trading_config.get("risk_tick_seconds") or 1)))
+            try:
+                configured_state_write_interval = float(
+                    trading_config.get("state_write_interval_seconds")
+                    or os.getenv("STRATEGY_STATE_WRITE_INTERVAL_SEC", "5")
+                )
+            except (TypeError, ValueError):
+                configured_state_write_interval = 5.0
+            state_write_interval = max(
+                1.0,
+                min(60.0, configured_state_write_interval),
+            )
             price_stale_after = max(
                 risk_tick * 3.0,
                 min(30.0, float(trading_config.get("price_stale_after_seconds") or 10.0)),
             )
             next_signal_poll = 0.0
+            last_signal_bar_token: int | None = None
+            last_processed_frame_timestamp: pd.Timestamp | None = None
+            initial_frames_pending = True
             stale_price_logged = False
             consecutive_errors = 0
+            last_market_data_failure_key = ""
+            last_market_data_log_at = 0.0
             strategy_name = str(strategy.get("strategy_name") or f"strategy_{strategy_id}")
             notification_config = _json_object(strategy.get("notification_config"))
             leverage = max(1.0, float(trading_config.get("leverage") or strategy.get("leverage") or 1))
@@ -532,6 +610,7 @@ class TradingExecutor:
                         session.context.update_order_statuses(
                             order_intent_service.statuses_by_client_order_ids(references)
                         )
+                    persist_cancellations(session.context, order_intent_service)
                     positions = self._positions_by_symbol(
                         strategy_id,
                         candidates,
@@ -584,6 +663,7 @@ class TradingExecutor:
                     session.synchronize_positions(
                         positions,
                         total_value=current_equity,
+                        available_cash=available_strategy_cash(current_equity, positions, candidates, leverage, active_prices),
                     )
                     risk_timestamp = pd.Timestamp.now(tz="UTC")
                     equity_intents, equity_messages, equity_stop_reason = (
@@ -600,8 +680,10 @@ class TradingExecutor:
                             strategy_name=strategy_name,
                             intent=intent,
                             frames=frames,
+                            frequency_frames=frequency_frames,
                             candidates=candidates,
                             initial_capital=initial_capital,
+                            strategy_equity=current_equity,
                             leverage=leverage,
                             execution_mode=execution_mode,
                             notification_config=notification_config,
@@ -658,8 +740,10 @@ class TradingExecutor:
                             strategy_name=strategy_name,
                             intent=intent,
                             frames=frames,
+                            frequency_frames=frequency_frames,
                             candidates=candidates,
                             initial_capital=initial_capital,
+                            strategy_equity=current_equity,
                             leverage=leverage,
                             execution_mode=execution_mode,
                             notification_config=notification_config,
@@ -688,54 +772,160 @@ class TradingExecutor:
                     # strategy position snapshot becomes flat.
                     protected = session.pending_protection_exit_symbols()
 
-                    # Realtime prices are an execution/risk input only. Normal
-                    # strategy entries and scale-ins remain completed-candle
-                    # driven through ``session.process(frames)`` below.
                     pending_count = len(equity_intents) + len(protection_intents)
-                    if not equity_stop_reason and cycle_started >= next_signal_poll:
-                        frequency_frames = fetch_runtime_frames()
-                        frames = frequency_frames[frequency]
-                        intents, messages, timestamp = session.process(
-                            frames,
-                            frequency_frames=frequency_frames,
+                    # Martingale templates explicitly declare a realtime
+                    # price trigger.  Run only their optional tick hook here;
+                    # ordinary Strategy V2 sources and DCA remain driven by
+                    # completed candles/schedules below.  The generated robot
+                    # keeps stable client ids and pending level state, so an
+                    # async order cannot be emitted again on the next tick.
+                    if (
+                        execution_mode == "live"
+                        and not equity_stop_reason
+                        and active_prices
+                        and bot_type in {"martingale", "layered_martingale"}
+                    ):
+                        realtime_intents, realtime_messages = session.evaluate_price_tick(
+                            active_prices,
+                            timestamp=risk_timestamp,
                         )
-                        intents = [
+                        realtime_intents = [
                             intent
-                            for intent in intents
+                            for intent in realtime_intents
                             if _runtime_position_key(
                                 intent.symbol,
                                 intent.position_side,
                             ) not in protected
                         ]
-                        pending_count += len(intents)
-                        for message in messages:
+                        pending_count += len(realtime_intents)
+                        for message in realtime_messages:
                             append_strategy_log(strategy_id, "info", message)
-                        for intent in intents:
+                        for intent in realtime_intents:
                             submitted = self._execute_strategy_v2_intent(
                                 strategy_id=strategy_id,
                                 strategy_name=strategy_name,
                                 intent=intent,
                                 frames=frames,
+                                frequency_frames=frequency_frames,
                                 candidates=candidates,
                                 initial_capital=initial_capital,
+                                strategy_equity=current_equity,
                                 leverage=leverage,
                                 execution_mode=execution_mode,
                                 notification_config=notification_config,
                                 trading_config=trading_config,
                                 exchange_config=exchange_config,
-                                signal_ts=self._intent_signal_timestamp(intent, timestamp),
+                                signal_ts=self._intent_signal_timestamp(intent, risk_timestamp),
                                 strategy_run_id=run_id,
+                                current_price_override=active_prices.get(str(intent.symbol)),
                                 direction_mode=direction_mode,
                             )
                             if intent.client_order_id:
                                 session.context.update_order_statuses({
                                     intent.client_order_id: {
                                         "client_order_id": intent.client_order_id,
-                                        "status": "submitted" if submitted else "rejected",
+                                        "status": (
+                                            "submitted" if submitted else "rejected"
+                                        ),
                                     },
                                 })
+                    if not equity_stop_reason and cycle_started >= next_signal_poll:
+                        from app.services.market_schedule import equity_daily_execution_session
+
+                        daily_policy = daily_equity_execution_policy(
+                            frequency, candidates, execution_mode=execution_mode,
+                            schedules=program.manifest.schedules,
+                        )
+                        signal_session = equity_daily_execution_session(*daily_policy) if daily_policy else None
+                        current_bar_token = completed_bar_token(frequency)
+                        if signal_session is not None:
+                            current_bar_token = int(signal_session.timestamp())
+                        has_new_closed_bar = (
+                            initial_frames_pending
+                            or current_bar_token != last_signal_bar_token
+                        ) and (not daily_policy or signal_session is not None)
+                        if has_new_closed_bar:
+                            # Startup already warmed the complete frame bundle.
+                            # Every later trigger extends the shared cache only
+                            # for the newly completed candle window.
+                            if not initial_frames_pending or daily_policy:
+                                frequency_frames = fetch_runtime_frames()
+                                frames = frequency_frames[frequency]
+                            latest_frame_timestamp = _latest_frame_timestamp(frames)
+                            frame_advanced = bool(
+                                initial_frames_pending
+                                or last_processed_frame_timestamp is None
+                                or (
+                                    latest_frame_timestamp is not None
+                                    and latest_frame_timestamp
+                                    > last_processed_frame_timestamp
+                                )
+                            )
+                            if daily_policy:
+                                frame_advanced = bool(
+                                    frame_advanced
+                                    and equity_daily_execution_session(*daily_policy) == signal_session
+                                    and equity_daily_frames_ready(frames, candidates, signal_session, daily_policy[0])
+                                    and all(
+                                        str(member["key"]) in active_prices
+                                        and time.monotonic() - last_price_seen_at.get(str(member["key"]), 0.0)
+                                        <= price_stale_after
+                                        for member in candidates
+                                    )
+                                )
+                            if frame_advanced:
+                                intents, messages, timestamp = session.process(
+                                    frames,
+                                    frequency_frames=frequency_frames,
+                                )
+                                intents = [
+                                    intent
+                                    for intent in intents
+                                    if _runtime_position_key(
+                                        intent.symbol,
+                                        intent.position_side,
+                                    ) not in protected
+                                ]
+                                pending_count += len(intents)
+                                for message in messages:
+                                    append_strategy_log(strategy_id, "info", message)
+                                for intent in intents:
+                                    submitted = self._execute_strategy_v2_intent(
+                                        strategy_id=strategy_id,
+                                        strategy_name=strategy_name,
+                                        intent=intent,
+                                        frames=frames,
+                                        frequency_frames=frequency_frames,
+                                        candidates=candidates,
+                                        initial_capital=initial_capital,
+                                        strategy_equity=current_equity,
+                                        leverage=leverage,
+                                        execution_mode=execution_mode,
+                                        notification_config=notification_config,
+                                        trading_config=trading_config,
+                                        exchange_config=exchange_config,
+                                        signal_ts=self._intent_signal_timestamp(intent, timestamp),
+                                        current_price_override=active_prices.get(str(intent.symbol)) if daily_policy else None,
+                                        strategy_run_id=run_id,
+                                        direction_mode=direction_mode,
+                                    )
+                                    if intent.client_order_id:
+                                        session.context.update_order_statuses({
+                                            intent.client_order_id: {
+                                                "client_order_id": intent.client_order_id,
+                                                "status": (
+                                                    "submitted" if submitted else "rejected"
+                                                ),
+                                            },
+                                        })
+                                initial_frames_pending = False
+                                last_signal_bar_token = current_bar_token
+                                last_processed_frame_timestamp = latest_frame_timestamp
                         next_signal_poll = cycle_started + signal_poll
-                    state_store.save(session.session_snapshot())
+                    state_store.save(
+                        session.session_snapshot(),
+                        min_interval_seconds=state_write_interval,
+                    )
                     self._heartbeat(
                         strategy_id,
                         run_id,
@@ -761,18 +951,43 @@ class TradingExecutor:
                         self._mark_stopped(strategy_id)
                         break
                     consecutive_errors = 0
+                    if last_market_data_failure_key:
+                        append_strategy_log(strategy_id, "info", "Market data feed recovered")
+                        last_market_data_failure_key = ""
+                        last_market_data_log_at = 0.0
                 except Exception as exc:
-                    if str(exc) == "strategyV2.noMarketData":
+                    if isinstance(exc, MarketDataUnavailableError) or str(exc) == "strategyV2.noMarketData":
                         next_signal_poll = cycle_started + signal_poll
+                        failure = (
+                            exc.failure
+                            if isinstance(exc, MarketDataUnavailableError)
+                            else classify_market_data_failure("No usable market data")
+                        )
+                        failure_key = "|".join((
+                            failure.code,
+                            failure.exchange_id,
+                            failure.market_type,
+                            failure.symbol,
+                            failure.timeframe,
+                            failure.technical_detail,
+                        ))
                         logger.warning(
-                            "Strategy %s temporarily has no usable market data",
+                            "Strategy %s market data unavailable (%s): %s",
                             strategy_id,
+                            failure.code,
+                            failure.technical_detail or failure.message,
                         )
-                        append_strategy_log(
-                            strategy_id,
-                            "warning",
-                            "Runtime cycle skipped because no instrument has usable market data",
-                        )
+                        if (
+                            failure_key != last_market_data_failure_key
+                            or cycle_started - last_market_data_log_at >= 60.0
+                        ):
+                            append_strategy_log(
+                                strategy_id,
+                                "warning",
+                                format_market_data_log(failure),
+                            )
+                            last_market_data_failure_key = failure_key
+                            last_market_data_log_at = cycle_started
                         self._heartbeat(
                             strategy_id,
                             run_id,
@@ -781,7 +996,7 @@ class TradingExecutor:
                             0,
                             loop_latency_ms=int((time.monotonic() - cycle_started) * 1000),
                             status="degraded",
-                            last_error=str(exc),
+                            last_error=f"marketData.{failure.code}",
                         )
                         continue
                     consecutive_errors += 1
@@ -806,9 +1021,14 @@ class TradingExecutor:
             exit_reason = str(exc)
             self._last_exit_reason[strategy_id] = exit_reason
             logger.exception("Strategy %s stopped after runtime failure", strategy_id)
-            append_strategy_log(strategy_id, "error", exit_reason)
+            if isinstance(exc, MarketDataUnavailableError):
+                append_strategy_log(strategy_id, "error", format_market_data_log(exc.failure))
+            else:
+                append_strategy_log(strategy_id, "error", exit_reason)
             self._mark_stopped(strategy_id)
         finally:
+            if state_store is not None:
+                state_store.flush()
             if market_price_feed is not None:
                 market_price_feed.stop()
             if run_id > 0:
@@ -824,6 +1044,7 @@ class TradingExecutor:
         strategy_name: str,
         intent: OrderIntent,
         frames: Dict[str, pd.DataFrame],
+        frequency_frames: Dict[str, Dict[str, pd.DataFrame]] | None = None,
         candidates: List[Dict[str, Any]],
         initial_capital: float,
         leverage: float,
@@ -835,6 +1056,7 @@ class TradingExecutor:
         strategy_run_id: int = 0,
         current_price_override: float | None = None,
         direction_mode: str = "",
+        strategy_equity: float | None = None,
     ) -> bool:
         member = next(
             (item for item in candidates if str(item.get("key") or "") == str(intent.symbol)),
@@ -863,10 +1085,14 @@ class TradingExecutor:
             for item in positions
         )
         market_type = str(member.get("market_type") or "spot").lower()
+        sizing_capital = max(
+            0.0,
+            float(initial_capital if strategy_equity is None else strategy_equity),
+        )
         target_amount = self._target_amount(
             intent,
             current_amount,
-            initial_capital,
+            sizing_capital,
             price,
             leverage=leverage,
             market_type=market_type,
@@ -880,6 +1106,14 @@ class TradingExecutor:
             raise RuntimeError("strategyV2.spotShortUnsupported")
 
         closes_position = abs(target_amount) <= 1e-12 and abs(current_amount) > 1e-12
+        if (
+            str(member.get("market") or "") == "Crypto"
+            and symbol.upper().endswith(("/USDT", "/USDC", "/USD"))
+            and intent.kind.startswith("target_")
+            and current_amount * target_amount > 0
+            and abs(target_amount - current_amount) * price <= 10.0 + 1e-9
+        ):
+            return False
         if abs(target_amount - current_amount) * price < MIN_LIVE_ORDER_NOTIONAL and not closes_position:
             return False
 
@@ -905,6 +1139,7 @@ class TradingExecutor:
                 current_positions=positions,
                 leverage=leverage,
                 initial_capital=initial_capital,
+                strategy_equity=sizing_capital,
                 market_type=market_type,
                 market_category=str(member.get("market") or ""),
                 execution_mode=execution_mode,
@@ -922,13 +1157,34 @@ class TradingExecutor:
                 signal_ts=signal_ts,
                 strategy_run_id=strategy_run_id,
                 price_exchange_id=str(member.get("exchange_id") or ""),
+                price_instrument_id=str(member.get("instrument_id") or ""),
+                market_frame=frame,
+                market_frames={
+                    frequency: bundle.get(str(intent.symbol))
+                    for frequency, bundle in (frequency_frames or {}).items()
+                    if bundle.get(str(intent.symbol)) is not None
+                },
             )) or submitted
         return submitted
 
     def _execute_signal(self, **values: Any) -> bool:
         strategy_id = int(values["strategy_id"])
         strategy = self._load_strategy(strategy_id) or {}
-        if str(values.get("execution_mode") or "signal").strip().lower() == "live":
+        requested_execution_mode = str(
+            values.get("execution_mode") or "signal"
+        ).strip().lower()
+        # A fatal worker error stops the strategy through the database.  The
+        # current runtime callback may still hold more intents, so enforce the
+        # lifecycle state again at the queue boundary to prevent a burst of
+        # orders after the stop has been requested.
+        persisted_status = str(strategy.get("status") or "").strip().lower()
+        if (
+            requested_execution_mode == "live"
+            and persisted_status
+            and persisted_status != "running"
+        ):
+            return False
+        if requested_execution_mode == "live":
             from app.services.strategy_live_guard import (
                 StrategyDirectionModeViolation,
                 validate_strategy_signal_direction,
@@ -974,8 +1230,14 @@ class TradingExecutor:
         quantity = float(values.get("script_base_qty") or 0)
         reference_price = float(values.get("current_price") or 0)
         initial_capital = float(values.get("initial_capital") or 0)
+        strategy_equity = max(
+            0.0,
+            float(values.get("strategy_equity") if values.get("strategy_equity") is not None else initial_capital),
+        )
         leverage = float(values.get("leverage") or 1)
-        nominal_capacity = initial_capital * max(1.0, leverage)
+        trading_config = _json_object(values.get("trading_config"))
+        ai_decision_filter = bool(trading_config.get("ai_decision_filter"))
+        nominal_capacity = strategy_equity * max(1.0, leverage)
         entry_pct = ((quantity * reference_price) / nominal_capacity * 100.0) if nominal_capacity > 0 else 0.0
         from app.services.pending_orders.order_budget import strategy_order_budget_snapshot
 
@@ -983,12 +1245,12 @@ class TradingExecutor:
             action=str(values.get("signal_type") or ""),
             quantity=quantity,
             price=reference_price,
-            initial_capital=initial_capital,
+            initial_capital=strategy_equity,
             leverage=leverage,
             market_type=str(values.get("market_type") or "spot"),
             current_positions=values.get("current_positions") or (),
             buffer_ratio=float(
-                (_json_object(values.get("trading_config"))).get("order_budget_buffer_ratio")
+                trading_config.get("order_budget_buffer_ratio")
                 or 0.02
             ),
         )
@@ -1025,11 +1287,29 @@ class TradingExecutor:
             maker_offset_bps=float(values.get("maker_offset_bps") or 0.0),
             protection=dict(values.get("protection") or {}),
             client_order_id=str(values.get("client_order_id") or ""),
+            ai_decision_filter=ai_decision_filter,
+            strategy_type=str(trading_config.get("bot_type") or ""),
+            decision_context=(
+                build_strategy_decision_context(
+                    values={**values, "trading_config": trading_config},
+                    strategy=strategy,
+                    order_budget=budget,
+                    strategy_equity=strategy_equity,
+                    initial_capital=initial_capital,
+                    entry_percent=entry_pct,
+                )
+                if ai_decision_filter else None
+            ),
             sizing={
                 "initial_capital": initial_capital,
                 "entry_pct": entry_pct,
                 "leverage": leverage,
                 "source": "strategy_v2",
+                **(
+                    {"current_equity": strategy_equity}
+                    if values.get("strategy_equity") is not None
+                    else {}
+                ),
             },
         )
         inflight_check = getattr(self.order_gateway, "has_inflight", None)
@@ -1039,14 +1319,33 @@ class TradingExecutor:
             and inflight_check(request)
         ):
             return False
+        if self.runtime_guard and not self.runtime_guard(strategy_id):
+            return False
         pending_id = self.order_gateway.submit(request)
         if pending_id:
-            append_strategy_log(
-                strategy_id,
-                "trade",
-                f"Order queued: {request.action} {request.symbol} "
-                f"quantity={format_decimal(request.quantity)}",
-            )
+            order_details = [f"pending_id={pending_id}"]
+            if request.order_type == "limit":
+                order_details.append(
+                    f"limit_price={format_decimal(request.limit_price, decimal_places=8)}"
+                )
+            if request.client_order_id:
+                order_details.append(f"client_order_id={request.client_order_id}")
+            if request.execution_mode == "signal":
+                append_strategy_log(
+                    strategy_id,
+                    "signal",
+                    f"Signal notification queued: {request.action} {request.symbol} "
+                    f"quantity={format_decimal(request.quantity)} "
+                    + " ".join(order_details),
+                )
+            else:
+                append_strategy_log(
+                    strategy_id,
+                    "trade",
+                    f"Order queued: {request.action} {request.symbol} "
+                    f"quantity={format_decimal(request.quantity)} "
+                    + " ".join(order_details),
+                )
         return bool(pending_id)
 
     def _run_grid_resting_loop(
@@ -1067,6 +1366,7 @@ class TradingExecutor:
         from app.services.grid.runner import GridRestingRunner
         from app.services.live_trading.account_configuration import configure_derivatives_account
         from app.services.live_trading.factory import create_client
+        from app.services.pending_orders.live_order_support import bind_instrument_product_contract
 
         symbol = str(primary.get("symbol") or "")
         market_type = str(primary.get("market_type") or "swap").strip().lower()
@@ -1077,11 +1377,18 @@ class TradingExecutor:
             trading_config.get("margin_mode") or trading_config.get("marginMode") or "cross"
         )
         client_holder: Dict[str, Any] = {}
+        bound_exchange_config = bind_instrument_product_contract(
+            exchange_config,
+            trading_config,
+            symbol=symbol,
+            exchange_id=exchange_id,
+            market_type=market_type,
+        )
 
         def create_grid_client():
             client = client_holder.get("client")
             if client is None:
-                client = create_client(exchange_config, market_type=market_type)
+                client = create_client(bound_exchange_config, market_type=market_type)
                 if market_type == "swap":
                     configure_derivatives_account(
                         client,
@@ -1094,6 +1401,8 @@ class TradingExecutor:
             return client
 
         def enqueue_market(signal_type: str, quantity: float, price: float, reason: str) -> bool:
+            if self.runtime_guard and not self.runtime_guard(strategy_id):
+                return False
             return self._execute_signal(
                 strategy_id=strategy_id,
                 strategy_name=strategy_name,
@@ -1108,7 +1417,7 @@ class TradingExecutor:
                 execution_mode="live",
                 notification_config=notification_config,
                 trading_config=trading_config,
-                exchange_config=exchange_config,
+            exchange_config=exchange_config,
                 signal_reason=str(reason or "grid"),
                 signal_ts=int(time.time()),
                 strategy_run_id=strategy_run_id,
@@ -1150,13 +1459,14 @@ class TradingExecutor:
             strategy_id,
             symbol,
             runtime_grid_config,
-            exchange_config,
+            bound_exchange_config,
             user_id=int((self._load_strategy(strategy_id) or {}).get("user_id") or 1),
             initial_capital=initial_capital,
             enqueue_market_fn=enqueue_market,
             create_client_fn=create_grid_client,
             risk_exit_fn=evaluate_grid_risk,
         )
+        runner.engine.order_guard = lambda: self.runtime_guard is None or self.runtime_guard(strategy_id)
         ok, message = runner.startup(initial_price, bars_df=frame)
         if not ok:
             raise RuntimeError(f"grid.startupFailed:{message}")
@@ -1172,7 +1482,7 @@ class TradingExecutor:
             instruments=candidates,
             rest_fallback=lambda: self._execution_account_prices(
                 candidates,
-                exchange_config,
+                bound_exchange_config,
                 client_holder,
             ),
         )
@@ -1230,6 +1540,112 @@ class TradingExecutor:
             grid_price_feed.stop()
             runner.shutdown()
         return grid_exit_reason
+
+    @staticmethod
+    def _recover_generated_grid_config(
+        trading_config: Dict[str, Any],
+        namespace: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Recover the durable grid contract from an already-saved template.
+
+        Some deployed visual-builder sources predate ``last_run_config``.  The
+        generated constants are part of the compiled source contract, so use
+        them only when the persisted grid parameters are incomplete.
+        """
+        runtime_config = dict(trading_config or {})
+        existing = (
+            dict(runtime_config.get("bot_params") or {})
+            if isinstance(runtime_config.get("bot_params"), dict)
+            else {}
+        )
+        try:
+            grid_template_version = int(namespace.get("GRID_TEMPLATE_VERSION") or 0)
+        except (TypeError, ValueError):
+            grid_template_version = 0
+        source_is_authoritative = grid_template_version >= 7
+        if not source_is_authoritative and all(
+            float(existing.get(key) or 0.0) > 0
+            for key in ("lowerPrice", "upperPrice", "gridCount")
+        ):
+            return runtime_config
+
+        lower_values = namespace.get("CELL_LOWER")
+        upper_values = namespace.get("CELL_UPPER")
+        if not isinstance(lower_values, (list, tuple)) or not isinstance(
+            upper_values,
+            (list, tuple),
+        ):
+            return runtime_config
+        try:
+            lowers = [float(value) for value in lower_values]
+            uppers = [float(value) for value in upper_values]
+        except (TypeError, ValueError):
+            return runtime_config
+        if not lowers or len(lowers) != len(uppers):
+            return runtime_config
+        boundaries = lowers + [uppers[-1]]
+        deltas = [
+            boundaries[index + 1] - boundaries[index]
+            for index in range(len(boundaries) - 1)
+        ]
+        average_delta = sum(deltas) / len(deltas) if deltas else 0.0
+        arithmetic = bool(
+            average_delta > 0
+            and max(abs(value - average_delta) for value in deltas)
+            <= abs(average_delta) * 1e-6
+        )
+        count = len(lowers)
+        raw_cell_budgets = namespace.get("CELL_BUDGET_PCTS")
+        cell_budget_pcts = []
+        if isinstance(raw_cell_budgets, (list, tuple)) and len(raw_cell_budgets) == count:
+            try:
+                cell_budget_pcts = [max(0.0, float(value)) for value in raw_cell_budgets]
+            except (TypeError, ValueError):
+                cell_budget_pcts = []
+        raw_cell_roles = namespace.get("CELL_ROLES")
+        cell_roles = []
+        if isinstance(raw_cell_roles, (list, tuple)) and len(raw_cell_roles) == count:
+            cell_roles = [str(value or "").strip().lower() for value in raw_cell_roles]
+        existing.update({
+            "lowerPrice": min(lowers),
+            "upperPrice": max(uppers),
+            "gridCount": count,
+            "gridCountUnit": "cells",
+            "amountPerGridPct": 1.0 / count,
+            "gridMode": "arithmetic" if arithmetic else "geometric",
+            "gridDirection": str(namespace.get("GRID_SIDE") or "long").strip().lower(),
+            "initialPositionPct": float(namespace.get("INITIAL_POSITION_PCT") or 0.0),
+            "orderMode": "maker",
+            "boundaryAction": "pause",
+            "maxOpenOrders": max(
+                1,
+                int(namespace.get("MAX_OPEN_ENTRY_ORDERS") or count),
+            ),
+            "dynamicAnchor": bool(namespace.get("DYNAMIC_ANCHOR")),
+        })
+        if cell_budget_pcts:
+            existing["cellBudgetPcts"] = cell_budget_pcts
+        if cell_roles:
+            existing["cellRoles"] = cell_roles
+        if source_is_authoritative:
+            existing["adaptiveBounds"] = False
+        runtime_config["strategy_family"] = "robot"
+        runtime_config["executor_type"] = "grid"
+        runtime_config["bot_type"] = "grid"
+        runtime_config["bot_params"] = existing
+        for runtime_key, source_key in (
+            ("equity_take_profit_pct", "EQUITY_TAKE_PROFIT"),
+            ("equity_stop_loss_pct", "EQUITY_STOP_LOSS"),
+            ("equity_trailing_enabled", "EQUITY_TRAILING_ENABLED"),
+            ("equity_trailing_activation_pct", "EQUITY_TRAILING_ACTIVATION"),
+            ("equity_trailing_callback_pct", "EQUITY_TRAILING_CALLBACK"),
+        ):
+            if (
+                source_key in namespace
+                and (source_is_authoritative or runtime_key not in runtime_config)
+            ):
+                runtime_config[runtime_key] = namespace[source_key]
+        return runtime_config
 
     @staticmethod
     def _materialize_grid_anchor(
@@ -1474,8 +1890,16 @@ class TradingExecutor:
         params = config.get("bot_params") if isinstance(config.get("bot_params"), dict) else {}
         upper = float(params.get("upperPrice") or params.get("upper_price") or 0)
         lower = float(params.get("lowerPrice") or params.get("lower_price") or 0)
+        boundary_action = str(
+            params.get("boundaryAction") or params.get("boundary_action") or "pause"
+        ).strip().lower()
         buffer_ratio = self._ratio(config.get("grid_oob_buffer_pct"), 0.05)
-        if upper > lower > 0 and current_price > 0 and buffer_ratio > 0:
+        if (
+            boundary_action == "stop_loss"
+            and upper > lower > 0
+            and current_price > 0
+            and buffer_ratio > 0
+        ):
             if current_price >= upper * (1 + buffer_ratio):
                 return close_all("grid_out_of_bounds_up", oob_threshold=upper * (1 + buffer_ratio))
             if current_price <= lower * (1 - buffer_ratio):
@@ -1561,10 +1985,21 @@ class TradingExecutor:
                 cur = db.cursor()
                 cur.execute(
                     """
-                    SELECT COALESCE(SUM(COALESCE(profit, 0) - COALESCE(commission_quote, 0)), 0) AS realized_pnl
-                    FROM qd_strategy_trades WHERE strategy_id = %s
+                    SELECT
+                      COALESCE((
+                        SELECT SUM(COALESCE(profit, 0) - COALESCE(commission_quote, commission, 0))
+                        FROM qd_strategy_trades WHERE strategy_id = %s
+                      ), 0)
+                      + COALESCE((
+                        SELECT SUM(COALESCE(amount, 0))
+                        FROM qd_strategy_funding_fees WHERE strategy_id = %s
+                      ), 0)
+                      + COALESCE((
+                        SELECT SUM(COALESCE(amount, 0))
+                        FROM qd_strategy_broker_activities WHERE strategy_id = %s
+                      ), 0) AS realized_pnl
                     """,
-                    (strategy_id,),
+                    (strategy_id, strategy_id, strategy_id),
                 )
                 realized = float((cur.fetchone() or {}).get("realized_pnl") or 0)
                 cur.close()
@@ -1703,17 +2138,30 @@ class TradingExecutor:
         source_id = int(trading_config.get("script_source_id") or 0)
         if source_id <= 0:
             raise RuntimeError("strategyV2.sourceRequired")
-        source = get_script_source_service().get_source(
-            source_id,
+        source_version_id = int(
+            strategy.get("source_version_id")
+            or trading_config.get("script_source_version_id")
+            or 0
+        )
+        if source_version_id <= 0:
+            raise RuntimeError("strategyV2.sourceVersionRequired")
+        source = get_script_source_service().get_version(
+            source_version_id,
             user_id=int(strategy.get("user_id") or 0),
         )
+        if not source or int(source.get("source_id") or 0) != source_id:
+            raise RuntimeError("strategyV2.sourceVersionNotFound")
         code = str((source or {}).get("code") or "").strip()
         if not code:
             raise RuntimeError("strategyV2.codeRequired")
         from app.services.strategy_runtime.bot_type import resolve_bot_type
         from app.services.strategy_runtime.robot_v2 import migrate_legacy_robot_v2_source
 
-        bot_type = resolve_bot_type(strategy, trading_config)
+        bot_type = resolve_bot_type(
+            strategy,
+            trading_config,
+            source_code=code,
+        )
         migrated = migrate_legacy_robot_v2_source(code, bot_type) if bot_type else code
         if migrated != code:
             # Upgrade generated legacy allocation units at the execution
@@ -1725,9 +2173,12 @@ class TradingExecutor:
                 f"Legacy {bot_type} robot allocation contract upgraded for this run",
             )
             code = migrated
-        return source_id, code
+        return source_version_id, code
 
     def _is_strategy_running(self, strategy_id: int, thread: threading.Thread) -> bool:
+        if self.runtime_guard and not self.runtime_guard(strategy_id):
+            self._last_exit_reason[strategy_id] = "strategyRuntime.leaseLost"
+            return False
         with self.lock:
             if self.running_strategies.get(strategy_id) is not thread:
                 return False
@@ -1760,9 +2211,9 @@ class TradingExecutor:
                 SELECT id, symbol, side, size, entry_price, current_price,
                        highest_price, lowest_price, updated_at
                 FROM qd_strategy_positions
-                WHERE strategy_id = %s AND split_part(symbol, ':', 1) = split_part(%s, ':', 1)
+                WHERE strategy_id = %s AND (%s::text IS NULL OR split_part(symbol, ':', 1) = split_part(%s, ':', 1))
                 """,
-                (strategy_id, symbol),
+                (strategy_id, symbol, symbol),
             )
             rows = cur.fetchall() or []
             cur.close()
@@ -1775,47 +2226,42 @@ class TradingExecutor:
         *,
         strategy: dict[str, Any] | None = None,
     ) -> dict[str, dict[str, Any]]:
-        from app.services.strategy_live_guard import resolve_strategy_direction_mode
-
-        output: dict[str, dict[str, Any]] = {}
-        strategy_row = strategy if isinstance(strategy, dict) else (self._load_strategy(strategy_id) or {})
-        owns_both_legs = resolve_strategy_direction_mode(strategy_row) in {"both", "neutral"}
-        for member in candidates:
-            key = str(member.get("key") or "")
-            rows = self._get_current_positions(strategy_id, str(member.get("symbol") or ""))
-            if not rows:
-                continue
-            selected_rows = rows if owns_both_legs else rows[:1]
-            for row in selected_rows:
-                side = str(row.get("side") or "long").strip().lower()
-                if side not in {"long", "short"}:
-                    side = "long"
-                position_key = f"{key}::{side}" if owns_both_legs else key
-                output[position_key] = {
-                    "amount": row.get("size") or 0,
-                    "side": side,
-                    "position_side": side if owns_both_legs else "",
-                    "avg_cost": row.get("entry_price") or 0,
-                    "last_price": row.get("current_price") or 0,
-                }
-        return output
+        return positions_by_symbol(self, strategy_id, candidates, strategy or self._load_strategy(strategy_id))
 
     @staticmethod
     def _live_prices(candidates: list[dict[str, Any]]) -> dict[str, float]:
         prices: dict[str, float] = {}
+        groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
         for member in candidates:
+            identity = (
+                str(member.get("market") or ""),
+                str(member.get("exchange_id") or ""),
+                str(member.get("market_type") or ""),
+            )
+            groups.setdefault(identity, []).append(member)
+        for (market, exchange_id, market_type), members in groups.items():
             try:
-                ticker = DataSourceFactory.get_ticker(
-                    str(member.get("market") or ""),
-                    str(member.get("symbol") or ""),
-                    exchange_id=str(member.get("exchange_id") or "") or None,
-                    market_type=str(member.get("market_type") or "") or None,
+                symbols = [str(member.get("symbol") or "") for member in members]
+                quotes = DataSourceFactory.get_tickers(
+                    market,
+                    symbols,
+                    exchange_id=exchange_id or None,
+                    market_type=market_type or None,
                 )
-                price = float((ticker or {}).get("last") or (ticker or {}).get("close") or 0)
-                if price > 0:
-                    prices[str(member.get("key") or "")] = price
+                for member in members:
+                    symbol = str(member.get("symbol") or "")
+                    ticker = quotes.get(symbol) or quotes.get(symbol.upper()) or {}
+                    price = float(ticker.get("last") or ticker.get("close") or 0)
+                    if price > 0:
+                        prices[str(member.get("key") or "")] = price
             except Exception as exc:
-                logger.warning("Price fetch failed for %s: %s", member.get("key"), exc)
+                logger.warning(
+                    "Batch price fetch failed for %s/%s (%s symbol(s)): %s",
+                    market,
+                    exchange_id or "default",
+                    len(members),
+                    exc,
+                )
         return prices
 
     @classmethod
@@ -1825,28 +2271,48 @@ class TradingExecutor:
         exchange_config: dict[str, Any],
         client_holder: dict[str, Any],
     ) -> dict[str, float]:
-        prices = cls._live_prices(candidates)
-        try:
-            from app.services.live_trading.factory import create_client
-            from app.services.live_trading.symbols import to_okx_spot_inst_id, to_okx_swap_inst_id
+        standard_candidates = [
+            member
+            for member in candidates
+            if str(
+                member.get("api_family") or member.get("market_type") or "spot"
+            ).strip().lower() in {"spot", "swap"}
+        ]
+        prices = cls._live_prices(standard_candidates) if standard_candidates else {}
+        from app.services.live_trading.factory import create_client
+        from app.services.live_trading.symbols import to_okx_spot_inst_id, to_okx_swap_inst_id
 
-            market_type = str((candidates[0] if candidates else {}).get("market_type") or "swap")
-            client = client_holder.get("client")
-            if client is None:
-                client = create_client(exchange_config, market_type=market_type)
-                client_holder["client"] = client
-            exchange_id = str(exchange_config.get("exchange_id") or "").strip().lower()
-            for member in candidates:
-                if str(member.get("market") or "") != "Crypto":
-                    continue
-                symbol = str(member.get("symbol") or "")
+        exchange_id = str(exchange_config.get("exchange_id") or "").strip().lower()
+        for member in candidates:
+            if str(member.get("market") or "") != "Crypto":
+                continue
+            symbol = str(member.get("symbol") or "")
+            market_type = str(member.get("market_type") or "swap").strip().lower()
+            api_family = str(member.get("api_family") or market_type).strip().lower()
+            instrument_id = str(member.get("instrument_id") or "").strip()
+            client_key = f"{market_type}:{api_family}:{instrument_id}"
+            try:
+                client = client_holder.get(client_key)
+                if client is None:
+                    client_config = dict(exchange_config)
+                    client_config["api_family"] = api_family
+                    if instrument_id:
+                        client_config["instrument_id"] = instrument_id
+                    product_meta = member.get("product_meta")
+                    if isinstance(product_meta, dict) and product_meta:
+                        client_config["instrument_product_meta"] = dict(product_meta)
+                    client = create_client(client_config, market_type=market_type)
+                    client_holder[client_key] = client
                 price = 0.0
                 if hasattr(client, "get_mark_price"):
                     price = float(client.get_mark_price(symbol=symbol) or 0.0)
                 elif hasattr(client, "get_ticker"):
                     if exchange_id == "okx":
-                        is_spot = str(member.get("market_type") or "").lower() == "spot"
-                        inst_id = to_okx_spot_inst_id(symbol) if is_spot else to_okx_swap_inst_id(symbol)
+                        inst_id = (
+                            to_okx_spot_inst_id(symbol)
+                            if market_type == "spot"
+                            else to_okx_swap_inst_id(symbol)
+                        )
                         ticker = client.get_ticker(inst_id=inst_id)
                     else:
                         ticker = client.get_ticker(symbol=symbol)
@@ -1863,8 +2329,14 @@ class TradingExecutor:
                         )
                 if price > 0:
                     prices[str(member.get("key") or "")] = price
-        except Exception as exc:
-            logger.warning("Execution-account price fetch failed: %s", exc)
+            except Exception as exc:
+                logger.warning(
+                    "Execution-account price fetch failed for %s/%s/%s: %s",
+                    exchange_id,
+                    market_type,
+                    instrument_id or symbol,
+                    exc,
+                )
         return prices
 
     @staticmethod
@@ -1922,3 +2394,34 @@ def _member_key(member: dict[str, Any]) -> str:
     elif market_type:
         suffix = f"@{market_type}"
     return f"{market}:{symbol}{suffix}"
+
+
+def _latest_frame_timestamp(
+    frames: pd.DataFrame | dict[str, pd.DataFrame] | None,
+) -> pd.Timestamp | None:
+    """Return the newest candle timestamp in a frame or instrument panel.
+
+    Live Strategy V2 sessions pass the driving-frequency panel as a mapping of
+    instrument keys to data frames.  Accepting a single frame as well keeps the
+    helper useful for focused callers and tests without confusing the panel
+    itself with a pandas object.
+    """
+    candidates = frames.values() if isinstance(frames, dict) else (frames,)
+    latest: pd.Timestamp | None = None
+    for frame in candidates:
+        if not isinstance(frame, pd.DataFrame) or frame.empty:
+            continue
+        try:
+            timestamp = pd.Timestamp(frame.index[-1])
+            if pd.isna(timestamp):
+                continue
+            timestamp = (
+                timestamp.tz_localize("UTC")
+                if timestamp.tzinfo is None
+                else timestamp.tz_convert("UTC")
+            )
+        except (TypeError, ValueError, IndexError):
+            continue
+        if latest is None or timestamp > latest:
+            latest = timestamp
+    return latest
