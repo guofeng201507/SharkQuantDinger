@@ -44,8 +44,9 @@ def shutdown_grid_for_strategy(strategy_id: int) -> None:
         gr.shutdown()
         return
     try:
-        from app.services.exchange_execution import load_strategy_configs, resolve_exchange_config
+        from app.services.exchange_execution import coalesce_exchange_config_from_payload, load_strategy_configs, resolve_exchange_config
         from app.services.live_trading.factory import create_client
+        from app.services.pending_orders.live_order_support import bind_instrument_product_contract
 
         sc = load_strategy_configs(sid) or {}
         tc = sc.get("trading_config") if isinstance(sc.get("trading_config"), dict) else {}
@@ -58,8 +59,15 @@ def shutdown_grid_for_strategy(strategy_id: int) -> None:
         if not symbol:
             return
         user_id = int(sc.get("user_id") or 1)
-        ex_cfg = resolve_exchange_config(sc.get("exchange_config") or {}, user_id=user_id)
-        mt = str(tc.get("market_type") or "swap").strip().lower()
+        ex_cfg = resolve_exchange_config(coalesce_exchange_config_from_payload(sc), user_id=user_id)
+        mt = str(tc.get("market_type") or sc.get("market_type") or "swap").strip().lower()
+        ex_cfg = bind_instrument_product_contract(
+            ex_cfg,
+            tc,
+            symbol=symbol,
+            exchange_id=str(ex_cfg.get("exchange_id") or ""),
+            market_type=mt,
+        )
 
         def _create_client():
             return create_client(ex_cfg, market_type=mt)
@@ -74,7 +82,7 @@ def shutdown_grid_for_strategy(strategy_id: int) -> None:
             enqueue_market=lambda *a, **k: False,
         )
         engine.shutdown()
-        append_strategy_log(sid, "info", "Grid orders cancelled on strategy stop (no active runner)")
+        append_strategy_log(sid, "info", "strategyRuntime.gridStopCleanup")
     except Exception as e:
         logger.warning("shutdown_grid_for_strategy sid=%s: %s", sid, e)
         append_strategy_log(sid, "warning", f"Grid stop cancel failed: {e}")
@@ -212,13 +220,39 @@ class GridRestingRunner:
             self._engine.sync_held_cell_exits(current_price)
         elif self._engine.cfg.initial_position_pct <= 0 or self._engine._initial_done:
             self._engine.sync_exit_coverage(current_price)
-        if self._engine.stop_requested:
+        startup_snapshot = self.operational_snapshot(force=True)
+        has_new_initial_fills = self._engine.has_new_startup_initial_fills
+        startup_coverage_failed = bool(
+            has_new_initial_fills
+            and not startup_snapshot.get("healthy")
+        )
+        if self._engine.stop_requested or startup_coverage_failed:
+            if has_new_initial_fills or startup_coverage_failed:
+                self._engine.cancel_all_orders_on_exchange()
+            else:
+                self._engine.cancel_entry_orders_on_exchange()
+            rollback_ok = (
+                self._engine.rollback_startup_initial_fills(current_price)
+                if has_new_initial_fills
+                else True
+            )
+            log_key = "strategyRuntime.gridStartupCoverageFailed"
+            if has_new_initial_fills:
+                log_key = (
+                    "strategyRuntime.gridStartupCoverageFailedRolledBack"
+                    if rollback_ok
+                    else "strategyRuntime.gridStartupCoverageFailedRollbackFailed"
+                )
             append_strategy_log(
                 self.strategy_id,
                 "error",
-                "Grid startup aborted: resting limit orders failed (check exchange error and order parameters)",
+                log_key,
             )
-            return False, "grid resting limit orders failed during startup"
+            if not has_new_initial_fills:
+                return False, "strategyRuntime.gridStartupCoverageFailed"
+            if rollback_ok:
+                return False, "strategyRuntime.gridStartupCoverageFailedRolledBack"
+            return False, "strategyRuntime.gridStartupCoverageFailedRollbackFailed"
         self._started = True
         register_runner(self)
         try:
@@ -238,7 +272,11 @@ class GridRestingRunner:
 
     def shutdown(self) -> None:
         try:
-            self._engine.shutdown()
+            preserve_exits = bool(
+                self._engine.stop_requested
+                and self._engine.stop_reason == "exchange error while placing grid resting order"
+            )
+            self._engine.shutdown(preserve_exit_orders=preserve_exits)
         finally:
             unregister_runner(self.strategy_id)
             self._started = False
@@ -337,7 +375,8 @@ class GridRestingRunner:
             except Exception as e:
                 logger.debug("grid risk exit: %s", e)
 
-        self._engine.handle_boundary(current_price)
+        if self._engine.handle_boundary(current_price):
+            return
 
         if (
             self._engine.cfg.initial_position_pct > 0

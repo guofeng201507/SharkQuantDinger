@@ -389,6 +389,24 @@ def handle_data(context, data):
     assert manifest.primary_frequency == "1h"
 
 
+def test_gate_hk_exchange_stock_keeps_canonical_live_identity():
+    code = """
+def initialize(context):
+    context.set_universe(["Crypto:00700/HKD@gate:spot"])
+    context.subscribe(frequency="1d")
+
+def handle_data(context, data):
+    pass
+"""
+    instrument = compile_strategy_v2(code).manifest.universe.instruments[0]
+
+    assert instrument.key == "Crypto:00700/HKD@gate:spot"
+    assert instrument.market == "Crypto"
+    assert instrument.symbol == "00700/HKD"
+    assert instrument.exchange_id == "gate"
+    assert instrument.market_type == "spot"
+
+
 def test_manifest_declares_direction_capability_from_metadata():
     code = """
 def initialize(context):
@@ -403,6 +421,22 @@ def handle_data(context, data):
 
     assert manifest.direction_mode == "both"
     assert manifest.metadata()["directionMode"] == "both"
+
+
+def test_manifest_accepts_one_way_net_position_capability():
+    code = """
+def initialize(context):
+    context.set_universe(["Crypto:BTC/USDT@okx:swap"])
+    context.subscribe(frequency="1h")
+    context.set_metadata(direction_mode="one_way")
+
+def handle_data(context, data):
+    pass
+"""
+    manifest = compile_strategy_v2(code).manifest
+
+    assert manifest.direction_mode == "one_way"
+    assert manifest.metadata()["directionMode"] == "one_way"
 
 
 def test_set_metadata_accepts_positional_key_value_pair():

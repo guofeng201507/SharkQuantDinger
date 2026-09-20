@@ -15,6 +15,7 @@ import time
 import threading
 from typing import Optional, Any, List, Dict
 from contextlib import contextmanager
+from contextvars import ContextVar
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -436,6 +437,7 @@ class PostgresCursor:
     def __init__(self, cursor):
         self._cursor = cursor
         self._last_insert_id = None
+        self._rowcount = None
         # INSERT ... RETURNING: execute() peeks the first row for lastrowid; callers
         # that also cur.fetchone() must see the same row (not a second fetch from PG).
         self._buffered_row: Optional[Dict[str, Any]] = None
@@ -472,6 +474,8 @@ class PostgresCursor:
             args = (args,)
 
         self._buffered_row = None
+        self._last_insert_id = None
+        self._rowcount = None
 
         is_insert = query.strip().upper().startswith('INSERT')
         has_returning = 'RETURNING' in query.upper()
@@ -490,6 +494,8 @@ class PostgresCursor:
                     result = self._cursor.execute(q_with_id, args)
                 else:
                     result = self._cursor.execute(q_with_id)
+                # RELEASE SAVEPOINT replaces the native rowcount with -1.
+                self._rowcount = self._cursor.rowcount
                 try:
                     row = self._cursor.fetchone()
                     if row and 'id' in row:
@@ -520,14 +526,18 @@ class PostgresCursor:
                         pass
                 # Retry without RETURNING id.  Leaves _last_insert_id as None.
                 if args:
-                    return self._cursor.execute(query, args)
-                return self._cursor.execute(query)
+                    result = self._cursor.execute(query, args)
+                else:
+                    result = self._cursor.execute(query)
+                self._rowcount = self._cursor.rowcount
+                return result
 
         # Non-INSERT, or INSERT with caller-supplied RETURNING
         if args:
             result = self._cursor.execute(query, args)
         else:
             result = self._cursor.execute(query)
+        self._rowcount = self._cursor.rowcount
 
         if is_insert and has_returning:
             try:
@@ -547,6 +557,7 @@ class PostgresCursor:
         query = self._convert_placeholders(query)
         self._buffered_row = None
         self._last_insert_id = None
+        self._rowcount = None
         if HAS_PSYCOPG2:
             return execute_batch(self._cursor, query, args_list, page_size=1000)
         return self._cursor.executemany(query, args_list)
@@ -583,7 +594,7 @@ class PostgresCursor:
     @property
     def rowcount(self) -> int:
         """Get affected row count"""
-        return self._cursor.rowcount
+        return self._cursor.rowcount if self._rowcount is None else self._rowcount
 
 
 class PostgresConnection:
@@ -617,6 +628,70 @@ class PostgresConnection:
                 logger.warning(f"Failed to return connection to pool: {e}")
 
 
+class _TransactionConnection:
+    """Keep legacy helper commits inside the owning transaction."""
+
+    def __init__(self, connection):
+        self.connection = connection
+        self.rollback_only = False
+        self.after_commit = []
+
+    def cursor(self):
+        return self.connection.cursor()
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        self.rollback_only = True
+
+    def close(self):
+        pass
+
+
+_active_transaction = ContextVar("postgres_active_transaction", default=None)
+
+
+def run_after_commit(callback, *args, **kwargs):
+    """Defer external effects until local accounting is durably committed."""
+    active = _active_transaction.get()
+    if active is None:
+        return callback(*args, **kwargs)
+    active.after_commit.append((callback, args, kwargs))
+    return True
+
+
+@contextmanager
+def get_pg_transaction():
+    """Atomically commit nested synchronous database helpers, or roll back all."""
+    active = _active_transaction.get()
+    if active is not None:
+        try:
+            yield active
+        except BaseException:
+            active.rollback_only = True
+            raise
+        return
+    with get_pg_connection() as connection:
+        transaction = _TransactionConnection(connection)
+        token = _active_transaction.set(transaction)
+        try:
+            yield transaction
+            if transaction.rollback_only:
+                raise RuntimeError("Database transaction marked for rollback")
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            _active_transaction.reset(token)
+    for callback, args, kwargs in transaction.after_commit:
+        try:
+            callback(*args, **kwargs)
+        except Exception:
+            logger.exception("Post-commit action failed; periodic order reconciliation will retry")
+
+
 @contextmanager
 def get_pg_connection():
     """
@@ -626,6 +701,14 @@ def get_pg_connection():
     immediately fail the request; we wait up to DB_POOL_ACQUIRE_TIMEOUT
     seconds for a connection to be released.
     """
+    active = _active_transaction.get()
+    if active is not None:
+        try:
+            yield active
+        except BaseException:
+            active.rollback_only = True
+            raise
+        return
     pg_pool = _get_connection_pool()
     conn = None
     broken = False

@@ -176,7 +176,6 @@ class StrategyService:
             "params": (existing.get("trading_config") or {}).get("params") or {},
             "directionMode": (existing.get("trading_config") or {}).get("direction_mode") or "",
             "positionSide": (existing.get("trading_config") or {}).get("position_side") or "",
-            "accountRisk": (existing.get("trading_config") or {}).get("account_risk") or {},
         }
         merged.update({key: value for key, value in changes.items() if value is not None})
         get_strategy_v2_deployment_service().save(
@@ -278,8 +277,7 @@ class StrategyService:
         allowed = {
             "sourceId", "name", "initialCapital", "executionMode", "credentialId",
             "leverageEnabled", "leverage", "params", "notificationChannels",
-            "notificationTargets", "directionMode", "positionSide",
-            "accountRisk",
+            "notificationTargets", "directionMode", "positionSide", "aiDecisionFilter",
         }
         unsupported = set(payload) - allowed - {"user_id"}
         if unsupported:

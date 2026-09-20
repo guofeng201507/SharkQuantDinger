@@ -20,8 +20,9 @@ from app.services.live_trading.binance_spot import BinanceSpotClient
 from app.services.live_trading.okx import OkxClient
 from app.services.live_trading.bitget import BitgetMixClient
 from app.services.live_trading.bitget_spot import BitgetSpotClient
+from app.services.live_trading.bitget_reality import BitgetRealityClient
 from app.services.live_trading.bybit import BybitClient
-from app.services.live_trading.gate import GateSpotClient, GateUsdtFuturesClient
+from app.services.live_trading.gate import GateSpotClient, GateStockClient, GateUsdtFuturesClient
 from app.services.live_trading.htx import HtxClient
 
 # Lazy import IBKR to avoid ImportError if ib_insync not installed
@@ -111,6 +112,10 @@ def exchange_trading_environment(cfg: Dict[str, Any], exchange_id: str = "") -> 
                 "testnet",
             )
         )
+        if ex == "alpaca" and not any(
+            key in cfg for key in ("paper", "is_paper", "enable_demo_trading", "enableDemoTrading")
+        ):
+            legacy_demo = legacy_demo or _get(cfg, "api_key", "apiKey").upper().startswith("PK")
         if not legacy_demo:
             return "live"
         environment = "testnet" if ex == "gate" else "demo"
@@ -142,6 +147,7 @@ def validate_exchange_environment(exchange_id: str, environment: str, market_sco
         "bybit": {"live", "demo"},
         "gate": {"live", "testnet"},
         "htx": {"live"},
+        "alpaca": {"live", "demo"},
     }
     if env not in allowed.get(ex, {"live"}):
         if ex == "htx" and env != "live":
@@ -253,6 +259,15 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
         # Bitget simulated trading uses the same REST host; keys must be created in Bitget demo trading.
         base_url = _get(exchange_config, "base_url", "baseUrl") or "https://api.bitget.com"
         if mt == "spot":
+            if str(exchange_config.get("api_family") or "").strip().lower() == "reality":
+                return BitgetRealityClient(
+                    api_key=api_key,
+                    secret_key=secret_key,
+                    passphrase=passphrase,
+                    base_url=base_url,
+                    simulated_trading=is_demo,
+                    instrument_id=_get(exchange_config, "instrument_id", "instrumentId"),
+                )
             return BitgetSpotClient(
                 api_key=api_key,
                 secret_key=secret_key,
@@ -299,6 +314,15 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
         if mt == "spot":
             default_gate = "https://api-testnet.gateapi.io" if is_demo else "https://api.gateio.ws"
             base_url = default_gate if is_demo else (_get(exchange_config, "base_url", "baseUrl") or default_gate)
+            if str(exchange_config.get("api_family") or "").strip().lower() == "stock":
+                if is_demo:
+                    raise LiveTradingError("strategyV2.gateStockTestnetUnsupported")
+                return GateStockClient(
+                    api_key=api_key,
+                    secret_key=secret_key,
+                    base_url=base_url,
+                    product_meta=exchange_config.get("instrument_product_meta") or {},
+                )
             return GateSpotClient(api_key=api_key, secret_key=secret_key, base_url=base_url)
         default_fut = "https://api-testnet.gateapi.io" if is_demo else "https://fx-api.gateio.ws"
         base_url = default_fut if is_demo else (_get(exchange_config, "base_url", "baseUrl") or default_fut)
@@ -325,7 +349,7 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
     # Alpaca: REST broker for US stocks + crypto (no local terminal needed).
     # Caller is responsible for validating market_category in (USStock, Crypto).
     if exchange_id == "alpaca":
-        return create_alpaca_client(exchange_config)
+        return create_alpaca_client({**exchange_config, "paper": is_demo})
 
     raise LiveTradingError(f"Unsupported exchange_id: {exchange_id}")
 
@@ -432,7 +456,7 @@ def create_alpaca_client(exchange_config: Dict[str, Any]):
     else:
         paper = api_key.upper().startswith("PK")
 
-    base_url = _get(exchange_config, "base_url", "baseUrl") or None
+    base_url = "https://paper-api.alpaca.markets" if paper else (_get(exchange_config, "base_url", "baseUrl") or None)
 
     config = AlpacaConfig(
         api_key=api_key,

@@ -450,10 +450,14 @@ components:
       properties:
         plan:
           type: string
+          minLength: 1
+          maxLength: 64
+        currency:
+          type: string
+          default: USDT
           enum:
-          - monthly
-          - yearly
-          - lifetime
+          - USDT
+          - USDC
         chain:
           type: string
           default: null
@@ -531,6 +535,9 @@ components:
           type: string
           default: ''
           maxLength: 16
+        ai_decision_filter:
+          type: boolean
+          default: false
       required:
       - amount
       - credential_id
@@ -590,6 +597,15 @@ components:
       required:
       - credential_id
       - symbol
+      additionalProperties: false
+    QuickTradeCancelRequest:
+      type: object
+      properties:
+        trade_id:
+          type: integer
+          minimum: 1
+      required:
+      - trade_id
       additionalProperties: false
   responses:
     DEFAULT_ERROR:
@@ -1877,21 +1893,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HumanSuccessEnvelope'
-      summary: Get all orders across the system (admin only).
-      description: 'Query params:
-
-        page: int (default 1)
-
-        page_size: int (default 20, max 100)
-
-        status: str (optional, filter by status: paid/pending/confirmed/expired/all)
-
-        search: str (optional, search by username/email)
-
-
-        Get all orders across the system (admin only).
-
-        Lists USDT on-chain membership orders only (qd_usdt_orders).'
+      summary: Return one paginated admin view for USDT, USDC and Stripe orders.
       tags:
       - Users
       operationId: getApiUsersAdminOrders
@@ -2110,26 +2112,6 @@ paths:
       - Strategy
       operationId: getApiBacktestFactorResearchGet
       summary: Get Api Backtest Factor Research Get
-      x-visibility: internal
-  /api/backtest/tune:
-    post:
-      responses:
-        '400':
-          description: Bad Request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HumanErrorEnvelope'
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HumanSuccessEnvelope'
-      tags:
-      - Strategy
-      operationId: postApiBacktestTune
-      summary: Post Api Backtest Tune
       x-visibility: internal
   /api/backtest/history:
     get:
@@ -2542,6 +2524,31 @@ paths:
       schema:
         type: integer
         minimum: 0
+    delete:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Universe
+      operationId: deleteApiUniversesUniverseId
+      summary: Delete Api Universes Universe Id
+      parameters:
+      - name: universe_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: internal
   /api/universes/{universe_id}/members:
     get:
       responses:
@@ -2746,6 +2753,105 @@ paths:
       operationId: postApiFactorsFundamentalsSync
       summary: Post Api Factors Fundamentals Sync
       x-visibility: internal
+  /api/factors/fundamentals/universe/{universe_id}:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Factor
+      operationId: getApiFactorsFundamentalsUniverseUniverseId
+      summary: Get Api Factors Fundamentals Universe Universe Id
+      parameters:
+      - name: universe_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: internal
+    parameters:
+    - in: path
+      name: universe_id
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+  /api/factors/fundamentals/universe/{universe_id}/sync:
+    post:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Factor
+      operationId: postApiFactorsFundamentalsUniverseUniverseIdSync
+      summary: Post Api Factors Fundamentals Universe Universe Id Sync
+      parameters:
+      - name: universe_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: internal
+    parameters:
+    - in: path
+      name: universe_id
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+  /api/factors/fundamentals/universe/{universe_id}/schedule:
+    post:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Factor
+      operationId: postApiFactorsFundamentalsUniverseUniverseIdSchedule
+      summary: Post Api Factors Fundamentals Universe Universe Id Schedule
+      parameters:
+      - name: universe_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: internal
+    parameters:
+    - in: path
+      name: universe_id
+      required: true
+      schema:
+        type: integer
+        minimum: 0
   /api/market-modules/:
     get:
       responses:
@@ -3029,6 +3135,31 @@ paths:
       schema:
         type: integer
         minimum: 0
+    patch:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Edit one approved long-term memory owned by the current user.
+      tags:
+      - AIChat
+      operationId: patchApiAiMemoryMemoryId
+      parameters:
+      - name: memory_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: internal
   /api/ai/chat/message:
     post:
       responses:
@@ -3068,6 +3199,120 @@ paths:
       tags:
       - AIChat
       operationId: postApiAiChatMessageStream
+      x-visibility: internal
+  /api/ai/prompt-library:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Return the current user's saved research prompts.
+      tags:
+      - AIChat
+      operationId: getApiAiPromptLibrary
+      x-visibility: internal
+    post:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Save one reusable research prompt without storing conversation output.
+      tags:
+      - AIChat
+      operationId: postApiAiPromptLibrary
+      x-visibility: internal
+  /api/ai/prompt-library/{prompt_id}:
+    delete:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - AIChat
+      operationId: deleteApiAiPromptLibraryPromptId
+      summary: Delete Api Ai Prompt Library Prompt Id
+      parameters:
+      - name: prompt_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: internal
+    parameters:
+    - in: path
+      name: prompt_id
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+  /api/ai/events:
+    post:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Record coarse product-usage events; prompt and response text are never
+        accepted.
+      tags:
+      - AIChat
+      operationId: postApiAiEvents
+      x-visibility: internal
+  /api/ai/events/summary:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Return aggregate counts used to personalize prompt ordering for one
+        user.
+      tags:
+      - AIChat
+      operationId: getApiAiEventsSummary
       x-visibility: internal
   /api/ai/chat/sessions:
     get:
@@ -3122,6 +3367,64 @@ paths:
       schema:
         type: integer
         minimum: 0
+  /api/ai/chat/sessions/{session_id}/memory:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Return visible session memory and bounded context telemetry.
+      tags:
+      - AIChat
+      operationId: getApiAiChatSessionsSessionIdMemory
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: internal
+    parameters:
+    - in: path
+      name: session_id
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+    delete:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Clear derived session memory without deleting the transcript.
+      tags:
+      - AIChat
+      operationId: deleteApiAiChatSessionsSessionIdMemory
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: internal
   /api/ai/chat/history:
     get:
       responses:
@@ -3182,6 +3485,60 @@ paths:
       operationId: postApiAiChatReportPdf
       summary: Post Api Ai Chat Report Pdf
       x-visibility: internal
+  /api/ai/chat/report/share:
+    post:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Create a public, read-only snapshot link for a report owned by the
+        user.
+      tags:
+      - AIChat
+      operationId: postApiAiChatReportShare
+      x-visibility: internal
+  /api/ai/chat/report/share/{token}:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Public endpoint for a capability-linked report snapshot; no login required.
+      tags:
+      - AIChat
+      operationId: getApiAiChatReportShareToken
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+      x-visibility: internal
+    parameters:
+    - in: path
+      name: token
+      required: true
+      schema:
+        type: string
+        minLength: 1
   /api/ai/chat/history/save:
     post:
       responses:
@@ -3242,8 +3599,8 @@ paths:
                 $ref: '#/components/schemas/HumanSuccessEnvelope'
       summary: Create or update an indicator for the current user.
       description: "Request (frontend sends many extra fields; we store only the essentials):\n\
-        {\n  id: number (0 for create),\n  name: string,\n  code: string,\n  description?:\
-        \ string,\n  ...\n}"
+        {\n  id: number (0 for create),\n  name: string,\n  code: string,\n  allowEmptyDraft?:\
+        \ boolean,\n  description?: string,\n  ...\n}"
       tags:
       - Indicator
       operationId: postApiIndicatorSaveIndicator
@@ -3368,6 +3725,118 @@ paths:
       - Indicator
       operationId: getApiIndicatorGetIndicatorParams
       x-visibility: public
+  /api/indicator/chart-preview:
+    post:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Return candles, indicator plots, and visual signals without creating
+        a task.
+      tags:
+      - Indicator
+      operationId: postApiIndicatorChartPreview
+      x-visibility: public
+  /api/indicator/aiWorkspace/{indicator_id}:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Load the bounded AI authoring workspace for one owned indicator.
+      tags:
+      - Indicator
+      operationId: getApiIndicatorAiWorkspaceIndicatorId
+      parameters:
+      - name: indicator_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: public
+    parameters:
+    - in: path
+      name: indicator_id
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+    delete:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Clear conversation and pending candidates without touching saved code.
+      tags:
+      - Indicator
+      operationId: deleteApiIndicatorAiWorkspaceIndicatorId
+      parameters:
+      - name: indicator_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: public
+  /api/indicator/aiWorkspace/changes/{change_id}/status:
+    post:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Mark a generated candidate as applied or discarded.
+      tags:
+      - Indicator
+      operationId: postApiIndicatorAiWorkspaceChangesChangeIdStatus
+      parameters:
+      - name: change_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: public
+    parameters:
+    - in: path
+      name: change_id
+      required: true
+      schema:
+        type: integer
+        minimum: 0
   /api/indicator/aiGenerate:
     post:
       responses:
@@ -3604,6 +4073,26 @@ paths:
       schema:
         type: integer
         minimum: 0
+  /api/strategies/script-sources/publish-readiness:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Strategy
+      operationId: getApiStrategiesScriptSourcesPublishReadiness
+      summary: Get Api Strategies Script Sources Publish Readiness
+      x-visibility: internal
   /api/strategies/script-templates:
     get:
       responses:
@@ -3914,6 +4403,26 @@ paths:
       tags:
       - Account
       operationId: getApiAccountPositions
+      x-visibility: internal
+  /api/strategies/ai-decisions:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Strategy
+      operationId: getApiStrategiesAiDecisions
+      summary: Get Api Strategies Ai Decisions
       x-visibility: internal
   /api/strategy-assets:
     get:
@@ -4255,6 +4764,46 @@ paths:
       - Strategy
       operationId: getApiStrategiesPositions
       x-visibility: internal
+  /api/strategies/position-ownership:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Strategy
+      operationId: getApiStrategiesPositionOwnership
+      summary: Get Api Strategies Position Ownership
+      x-visibility: internal
+  /api/strategies/position-ownership/repair:
+    post:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Strategy
+      operationId: postApiStrategiesPositionOwnershipRepair
+      summary: Post Api Strategies Position Ownership Repair
+      x-visibility: internal
   /api/strategies/review-report:
     post:
       responses:
@@ -4542,6 +5091,117 @@ paths:
       - Strategy
       operationId: postApiStrategiesGenerate
       summary: Post Api Strategies Generate
+      x-visibility: internal
+  /api/strategies/ai-workspace/{source_id}:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Strategy
+      operationId: getApiStrategiesAiWorkspaceSourceId
+      summary: Get Api Strategies Ai Workspace Source Id
+      parameters:
+      - name: source_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: internal
+    parameters:
+    - in: path
+      name: source_id
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+    delete:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Strategy
+      operationId: deleteApiStrategiesAiWorkspaceSourceId
+      summary: Delete Api Strategies Ai Workspace Source Id
+      parameters:
+      - name: source_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: internal
+  /api/strategies/ai-workspace/changes/{change_id}/status:
+    post:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Strategy
+      operationId: postApiStrategiesAiWorkspaceChangesChangeIdStatus
+      summary: Post Api Strategies Ai Workspace Changes Change Id Status
+      parameters:
+      - name: change_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: internal
+    parameters:
+    - in: path
+      name: change_id
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+  /api/strategies/ai-workspace/turn:
+    post:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Strategy
+      operationId: postApiStrategiesAiWorkspaceTurn
+      summary: Post Api Strategies Ai Workspace Turn
       x-visibility: internal
   /api/credentials/desktop-brokers-policy:
     get:
@@ -5615,6 +6275,26 @@ paths:
       - IBKR
       operationId: getApiIbkrQuote
       x-visibility: internal
+  /api/alpaca/accounts:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Alpaca
+      operationId: getApiAlpacaAccounts
+      summary: Get Api Alpaca Accounts
+      x-visibility: internal
   /api/alpaca/status:
     get:
       responses:
@@ -6057,6 +6737,72 @@ paths:
       tags:
       - Community
       operationId: getApiCommunityIndicatorsIndicatorId
+      parameters:
+      - name: indicator_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: public
+    parameters:
+    - in: path
+      name: indicator_id
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+  /api/community/indicators/{indicator_id}/compatibility:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Community
+      operationId: getApiCommunityIndicatorsIndicatorIdCompatibility
+      summary: Get Api Community Indicators Indicator Id Compatibility
+      parameters:
+      - name: indicator_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: public
+    parameters:
+    - in: path
+      name: indicator_id
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+  /api/community/indicators/{indicator_id}/adapt:
+    post:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Community
+      operationId: postApiCommunityIndicatorsIndicatorIdAdapt
+      summary: Post Api Community Indicators Indicator Id Adapt
       parameters:
       - name: indicator_id
         in: path
@@ -6621,22 +7367,36 @@ paths:
               schema:
                 $ref: '#/components/schemas/HumanSuccessEnvelope'
       summary: Fast AI analysis for any symbol.
-      description: 'Request body:
-
-        market (required): Crypto, USStock, Forex, etc.
-
-        symbol (required): e.g. BTC/USDT, AAPL
-
-        language (optional, default en-US): Response language
-
-        model (optional): LLM model id, e.g. openai/gpt-5.4
-
-        timeframe (optional, default 1D): Analysis timeframe
-
-        async_submit (optional): Submit as background task'
+      description: "Request body:\nmarket (required): Crypto, USStock, Forex, etc.\n\
+        symbol (required): e.g. BTC/USDT, AAPL\nlanguage (optional, default en-US):\
+        \ Response language\nmodel (optional): LLM model id, e.g. openai/gpt-5.4\n\
+        timeframe (optional, default 1D): Analysis timeframe\nasync_submit (optional):\
+        \ Submit as background task\nresponse_contract (optional): professional_report_v1\
+        \ returns only the\n    versioned report artifact plus runtime and billing\
+        \ metadata."
       tags:
       - FastAnalysis
       operationId: postApiFastAnalysisAnalyze
+      x-visibility: public
+  /api/fast-analysis/data-sources:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: List community and professional report providers without secrets.
+      tags:
+      - FastAnalysis
+      operationId: getApiFastAnalysisDataSources
       x-visibility: public
   /api/fast-analysis/history:
     get:
@@ -6801,6 +7561,87 @@ paths:
       - Billing
       operationId: getApiBillingPlans
       x-visibility: private
+  /api/billing/crypto/chains:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Billing
+      operationId: getApiBillingCryptoChains
+      summary: Get Api Billing Crypto Chains
+      x-visibility: private
+  /api/billing/crypto/create:
+    post:
+      responses:
+        '422':
+          $ref: '#/components/responses/UNPROCESSABLE_ENTITY'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BillingOrderRequest'
+      tags:
+      - Billing
+      operationId: postApiBillingCryptoCreate
+      summary: Post Api Billing Crypto Create
+      x-visibility: private
+  /api/billing/crypto/order/{order_id}:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Billing
+      operationId: getApiBillingCryptoOrderOrderId
+      summary: Get Api Billing Crypto Order Order Id
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: integer
+      x-visibility: private
+    parameters:
+    - in: path
+      name: order_id
+      required: true
+      schema:
+        type: integer
+        minimum: 0
   /api/billing/usdt/chains:
     get:
       responses:
@@ -6850,7 +7691,7 @@ paths:
             schema:
               $ref: '#/components/schemas/BillingOrderRequest'
       summary: Create a USDT membership order.
-      description: "Body:\n{\n  plan:  \"monthly\" | \"yearly\" | \"lifetime\",\n\
+      description: "Body:\n{\n  plan:  dynamic plan code returned by GET /plans,\n\
         \  chain: \"TRC20\" | \"BEP20\" | \"ERC20\" | \"SOL\"   # optional; defaults\
         \ to\n                                               # the first enabled chain\n\
         }"
@@ -6891,6 +7732,85 @@ paths:
       schema:
         type: integer
         minimum: 0
+  /api/billing/stripe/create:
+    post:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Billing
+      operationId: postApiBillingStripeCreate
+      summary: Post Api Billing Stripe Create
+      x-visibility: private
+  /api/billing/stripe/webhook:
+    post:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Billing
+      operationId: postApiBillingStripeWebhook
+      summary: Post Api Billing Stripe Webhook
+      x-visibility: private
+  /api/billing/admin/plans:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Billing
+      operationId: getApiBillingAdminPlans
+      summary: Get Api Billing Admin Plans
+      x-visibility: private
+    put:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      tags:
+      - Billing
+      operationId: putApiBillingAdminPlans
+      summary: Put Api Billing Admin Plans
+      x-visibility: private
   /api/quick-trade/place-order:
     post:
       responses:
@@ -7025,6 +7945,34 @@ paths:
       - QuickTrade
       operationId: postApiQuickTradeClosePosition
       x-visibility: private
+  /api/quick-trade/cancel-order:
+    post:
+      responses:
+        '422':
+          $ref: '#/components/responses/UNPROCESSABLE_ENTITY'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuickTradeCancelRequest'
+      summary: Cancel an active Quick Trade limit order owned by the current user.
+      tags:
+      - QuickTrade
+      operationId: postApiQuickTradeCancelOrder
+      x-visibility: private
   /api/quick-trade/history:
     get:
       responses:
@@ -7041,7 +7989,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HumanSuccessEnvelope'
       summary: Get quick trade history for the current user.
-      description: 'Query: limit (int, default 50), offset (int, default 0)'
+      description: 'Query: limit, offset, credential_id, symbol, market_type'
       tags:
       - QuickTrade
       operationId: getApiQuickTradeHistory

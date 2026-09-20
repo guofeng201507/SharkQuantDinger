@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS qd_users (
     role VARCHAR(20) DEFAULT 'user',       -- admin/manager/user/viewer
     credits DECIMAL(20,2) DEFAULT 0,
     vip_expires_at TIMESTAMP,              -- VIP杩囨湡鏃堕棿
-    vip_plan VARCHAR(20) DEFAULT '',
+    vip_plan VARCHAR(64) DEFAULT '',
     vip_is_lifetime BOOLEAN DEFAULT FALSE,
     vip_monthly_credits_last_grant TIMESTAMP,
     email_verified BOOLEAN DEFAULT FALSE,
@@ -64,7 +64,7 @@ CREATE INDEX IF NOT EXISTS idx_credits_log_created_at ON qd_credits_log(created_
 CREATE TABLE IF NOT EXISTS qd_membership_orders (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
-    plan VARCHAR(20) NOT NULL,             -- monthly/yearly/lifetime
+    plan VARCHAR(64) NOT NULL,
     price_usd DECIMAL(10,2) DEFAULT 0,
     status VARCHAR(20) DEFAULT 'paid',
     created_at TIMESTAMP DEFAULT NOW(),
@@ -72,6 +72,46 @@ CREATE TABLE IF NOT EXISTS qd_membership_orders (
 );
 
 CREATE INDEX IF NOT EXISTS idx_membership_orders_user_id ON qd_membership_orders(user_id);
+
+CREATE TABLE IF NOT EXISTS qd_billing_plans (
+    code VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(120) NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    price_usd DECIMAL(12,2) NOT NULL DEFAULT 0,
+    duration_days INTEGER NOT NULL DEFAULT 0,
+    credits_once INTEGER NOT NULL DEFAULT 0,
+    credits_monthly INTEGER NOT NULL DEFAULT 0,
+    is_lifetime BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    is_popular BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    stripe_price_id VARCHAR(255) NOT NULL DEFAULT '',
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS qd_membership_fulfillments (
+    provider_ref VARCHAR(255) PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    plan VARCHAR(64) NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS qd_stripe_orders (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    plan VARCHAR(64) NOT NULL,
+    stripe_session_id VARCHAR(255) UNIQUE,
+    amount_usd DECIMAL(12,2) NOT NULL DEFAULT 0,
+    currency VARCHAR(10) NOT NULL DEFAULT 'usd',
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    paid_at TIMESTAMP,
+    expires_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+ALTER TABLE qd_stripe_orders ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;
 
 -- =============================================================================
 -- 1.56. USDT Orders (multi-chain single-receiving-address + amount-suffix model)
@@ -89,7 +129,7 @@ CREATE INDEX IF NOT EXISTS idx_membership_orders_user_id ON qd_membership_orders
 CREATE TABLE IF NOT EXISTS qd_usdt_orders (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
-    plan VARCHAR(20) NOT NULL,                                  -- monthly/yearly/lifetime
+    plan VARCHAR(64) NOT NULL,
     chain VARCHAR(20) NOT NULL DEFAULT 'TRC20',                 -- TRC20/BEP20/ERC20/SOL
     currency VARCHAR(10) NOT NULL DEFAULT 'USDT',
     amount_usdt DECIMAL(20,8) NOT NULL DEFAULT 0,               -- final amount = base + suffix (6 dp typical)
@@ -117,8 +157,13 @@ CREATE INDEX IF NOT EXISTS idx_usdt_orders_status ON qd_usdt_orders(status);
 DROP INDEX IF EXISTS idx_usdt_orders_address_unique;
 -- Prevent two active orders on the same chain from claiming the same amount,
 -- which is the foundation of the amount-suffix matching scheme.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_usdt_orders_amount_active
-  ON qd_usdt_orders(chain, amount_usdt)
+-- Existing installations must gain the discriminator before the new index
+-- references it; CREATE TABLE IF NOT EXISTS above does not alter old tables.
+ALTER TABLE qd_usdt_orders
+    ADD COLUMN IF NOT EXISTS currency VARCHAR(10) NOT NULL DEFAULT 'USDT';
+DROP INDEX IF EXISTS idx_usdt_orders_amount_active;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_crypto_orders_amount_active
+  ON qd_usdt_orders(currency, chain, amount_usdt)
   WHERE status IN ('pending', 'paid');
 
 -- One-shot cleanup for installs that pre-date v3.0.6. address_index is no
@@ -163,6 +208,12 @@ BEGIN
     -- widen address (TRC20 base58 ~34, Solana ~44; old col was 80)
     BEGIN
         ALTER TABLE qd_usdt_orders ALTER COLUMN address TYPE VARCHAR(120);
+    EXCEPTION WHEN others THEN NULL;
+    END;
+    BEGIN
+        ALTER TABLE qd_usdt_orders ALTER COLUMN plan TYPE VARCHAR(64);
+        ALTER TABLE qd_membership_orders ALTER COLUMN plan TYPE VARCHAR(64);
+        ALTER TABLE qd_users ALTER COLUMN vip_plan TYPE VARCHAR(64);
     EXCEPTION WHEN others THEN NULL;
     END;
 END
@@ -311,6 +362,7 @@ CREATE TABLE IF NOT EXISTS qd_strategies_trading (
     market_type VARCHAR(20) DEFAULT 'swap',
     exchange_config JSONB NOT NULL DEFAULT '{}'::jsonb,
     trading_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    source_version_id INTEGER,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -360,6 +412,107 @@ CREATE INDEX IF NOT EXISTS idx_script_source_versions_source
 ON qd_script_source_versions(source_id, version_no DESC);
 CREATE INDEX IF NOT EXISTS idx_script_source_versions_user
 ON qd_script_source_versions(user_id);
+
+ALTER TABLE qd_strategies_trading
+ADD COLUMN IF NOT EXISTS source_version_id INTEGER;
+
+INSERT INTO qd_script_source_versions
+    (source_id, user_id, version_no, name, description, code,
+     template_key, param_schema, metadata, created_at)
+SELECT source.id,
+       source.user_id,
+       COALESCE(latest.version_no, 0) + 1,
+       source.name,
+       COALESCE(source.description, ''),
+       COALESCE(source.code, ''),
+       COALESCE(source.template_key, ''),
+       COALESCE(source.param_schema, '{}'::jsonb),
+       COALESCE(source.metadata, '{}'::jsonb),
+       NOW()
+FROM qd_script_sources AS source
+LEFT JOIN LATERAL (
+    SELECT version.id, version.version_no, version.name, version.description,
+           version.code, version.template_key, version.param_schema, version.metadata
+    FROM qd_script_source_versions AS version
+    WHERE version.source_id = source.id
+      AND version.user_id = source.user_id
+    ORDER BY version.version_no DESC
+    LIMIT 1
+) AS latest ON TRUE
+WHERE latest.id IS NULL
+   OR latest.name IS DISTINCT FROM source.name
+   OR latest.description IS DISTINCT FROM COALESCE(source.description, '')
+   OR latest.code IS DISTINCT FROM COALESCE(source.code, '')
+   OR latest.template_key IS DISTINCT FROM COALESCE(source.template_key, '')
+   OR latest.param_schema IS DISTINCT FROM COALESCE(source.param_schema, '{}'::jsonb)
+   OR latest.metadata IS DISTINCT FROM COALESCE(source.metadata, '{}'::jsonb)
+ON CONFLICT (source_id, version_no) DO NOTHING;
+
+WITH deployment_version AS (
+    SELECT deployment.id AS strategy_id,
+           COALESCE(
+               (
+                   SELECT version.id
+                   FROM qd_script_source_versions AS version
+                   WHERE version.source_id = deployment.source_id
+                     AND version.user_id = deployment.user_id
+                     AND version.created_at <= deployment.created_at
+                   ORDER BY version.created_at DESC, version.version_no DESC
+                   LIMIT 1
+               ),
+               (
+                   SELECT version.id
+                   FROM qd_script_source_versions AS version
+                   WHERE version.source_id = deployment.source_id
+                     AND version.user_id = deployment.user_id
+                   ORDER BY version.version_no DESC
+                   LIMIT 1
+               )
+           ) AS version_id
+    FROM (
+        SELECT strategy.id,
+               strategy.user_id,
+               strategy.created_at,
+               CASE
+                   WHEN COALESCE(strategy.trading_config->>'script_source_id', '') ~ '^[0-9]+$'
+                   THEN (strategy.trading_config->>'script_source_id')::INTEGER
+                   ELSE NULL
+               END AS source_id
+        FROM qd_strategies_trading AS strategy
+        WHERE strategy.source_version_id IS NULL
+    ) AS deployment
+    WHERE deployment.source_id IS NOT NULL
+)
+UPDATE qd_strategies_trading AS strategy
+SET source_version_id = deployment_version.version_id,
+    trading_config = jsonb_set(
+        COALESCE(strategy.trading_config, '{}'::jsonb),
+        '{script_source_version_id}',
+        to_jsonb(deployment_version.version_id),
+        TRUE
+    )
+FROM deployment_version
+WHERE strategy.id = deployment_version.strategy_id
+  AND deployment_version.version_id IS NOT NULL;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'fk_strategy_source_version'
+          AND conrelid = 'qd_strategies_trading'::regclass
+    ) THEN
+        ALTER TABLE qd_strategies_trading
+        ADD CONSTRAINT fk_strategy_source_version
+        FOREIGN KEY (source_version_id)
+        REFERENCES qd_script_source_versions(id)
+        ON DELETE RESTRICT;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_strategies_source_version
+ON qd_strategies_trading(source_version_id);
 
 CREATE TABLE IF NOT EXISTS qd_script_templates (
     id SERIAL PRIMARY KEY,
@@ -827,12 +980,160 @@ ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS source_strategy_id int4 
 ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS source_language varchar(16) DEFAULT NULL;
 ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS name_i18n jsonb DEFAULT NULL;
 ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS description_i18n jsonb DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS strategy_contract jsonb DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS strategy_contract_version int4 DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS strategy_contract_hash varchar(64) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS strategy_binding_mode varchar(24) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS strategy_type varchar(24) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS strategy_direction_mode varchar(24) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS strategy_primary_frequency varchar(16) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS strategy_markets varchar(255) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS strategy_market_types varchar(255) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS strategy_timeframes varchar(255) DEFAULT NULL;
+-- Canonical marketplace applicability metadata. Legacy strategy_* columns
+-- above remain only for upgrade/rollback compatibility.
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS marketplace_contract jsonb DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS marketplace_contract_version int4 DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS marketplace_contract_hash varchar(64) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS marketplace_binding_mode varchar(24) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS marketplace_strategy_type varchar(24) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS marketplace_direction_mode varchar(24) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS marketplace_execution_mode varchar(24) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS marketplace_execution_frequency varchar(16) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS marketplace_confirmation_frequencies varchar(255) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS marketplace_markets varchar(255) DEFAULT NULL;
+ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS marketplace_market_types varchar(255) DEFAULT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_indicator_codes_user_id ON qd_indicator_codes USING btree (user_id);
 CREATE INDEX IF NOT EXISTS idx_indicator_review_status ON qd_indicator_codes USING btree (review_status);
 CREATE INDEX IF NOT EXISTS idx_indicator_codes_source ON qd_indicator_codes USING btree (source_indicator_id);
 CREATE INDEX IF NOT EXISTS idx_indicator_codes_source_script ON qd_indicator_codes USING btree (source_script_source_id);
 CREATE INDEX IF NOT EXISTS idx_indicator_codes_source_strategy ON qd_indicator_codes USING btree (source_strategy_id);
+
+-- One strategy source owns one active marketplace listing per author.  Older
+-- installations may already contain duplicates from the former insert-only
+-- publish flow.  Keep the most established card active and only unpublish the
+-- extras, preserving their purchase/comment/version records for auditability.
+WITH ranked_script_listings AS (
+  SELECT id,
+         ROW_NUMBER() OVER (
+           PARTITION BY user_id, source_script_source_id
+           ORDER BY COALESCE(purchase_count, 0) DESC,
+                    COALESCE(rating_count, 0) DESC,
+                    COALESCE(view_count, 0) DESC,
+                    id ASC
+         ) AS listing_rank
+  FROM qd_indicator_codes
+  WHERE source_script_source_id IS NOT NULL
+    AND COALESCE(asset_type, 'indicator') = 'script_template'
+    AND publish_to_community = 1
+)
+UPDATE qd_indicator_codes AS listing
+SET publish_to_community = 0,
+    updated_at = NOW(),
+    updatetime = EXTRACT(EPOCH FROM NOW())::bigint
+FROM ranked_script_listings AS ranked
+WHERE listing.id = ranked.id
+  AND ranked.listing_rank > 1;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_indicator_codes_active_script_source
+ON qd_indicator_codes USING btree (user_id, source_script_source_id)
+WHERE source_script_source_id IS NOT NULL
+  AND COALESCE(asset_type, 'indicator') = 'script_template'
+  AND publish_to_community = 1;
+CREATE INDEX IF NOT EXISTS idx_indicator_strategy_binding ON qd_indicator_codes USING btree (strategy_binding_mode);
+CREATE INDEX IF NOT EXISTS idx_indicator_strategy_type ON qd_indicator_codes USING btree (strategy_type);
+CREATE INDEX IF NOT EXISTS idx_indicator_strategy_frequency ON qd_indicator_codes USING btree (strategy_primary_frequency);
+CREATE INDEX IF NOT EXISTS idx_indicator_marketplace_binding ON qd_indicator_codes USING btree (marketplace_binding_mode);
+CREATE INDEX IF NOT EXISTS idx_indicator_marketplace_strategy_type ON qd_indicator_codes USING btree (marketplace_strategy_type);
+CREATE INDEX IF NOT EXISTS idx_indicator_marketplace_execution_mode ON qd_indicator_codes USING btree (marketplace_execution_mode);
+CREATE INDEX IF NOT EXISTS idx_indicator_marketplace_execution_frequency ON qd_indicator_codes USING btree (marketplace_execution_frequency);
+
+-- Copy legacy marketplace metadata into the canonical namespace.  This is
+-- idempotent and intentionally leaves the old columns intact for rollback.
+UPDATE qd_indicator_codes
+SET marketplace_contract = COALESCE(
+        marketplace_contract,
+        CASE WHEN strategy_contract IS NULL THEN NULL ELSE
+          strategy_contract || jsonb_build_object(
+            'contract_version', 2,
+            'execution_mode', COALESCE(
+              strategy_contract->>'execution_mode',
+              CASE
+                WHEN code ~ E'run_(daily|weekly|monthly)\\s*\\(' AND code ~ E'def\\s+handle_data\\s*\\(' THEN 'hybrid'
+                WHEN code ~ E'run_(daily|weekly|monthly)\\s*\\(' THEN 'scheduled'
+                ELSE 'bar'
+              END
+            ),
+            'execution_frequency', COALESCE(
+              strategy_contract->>'execution_frequency',
+              strategy_contract->>'driving_frequency',
+              strategy_contract->>'primary_frequency',
+              ''
+            ),
+            'confirmation_frequencies', COALESCE(
+              strategy_contract->'confirmation_frequencies',
+              (SELECT COALESCE(jsonb_agg(value), '[]'::jsonb)
+               FROM jsonb_array_elements_text(COALESCE(strategy_contract->'frequencies', '[]'::jsonb)) AS f(value)
+               WHERE value <> COALESCE(
+                 strategy_contract->>'execution_frequency',
+                 strategy_contract->>'driving_frequency',
+                 strategy_contract->>'primary_frequency',
+                 ''
+               ))
+            )
+          )
+        END
+    ),
+    marketplace_contract_version = COALESCE(
+      marketplace_contract_version,
+      CASE WHEN strategy_contract IS NULL THEN NULL ELSE 2 END
+    ),
+    marketplace_contract_hash = COALESCE(marketplace_contract_hash, strategy_contract_hash),
+    marketplace_binding_mode = COALESCE(marketplace_binding_mode, strategy_binding_mode),
+    marketplace_strategy_type = COALESCE(marketplace_strategy_type, strategy_type),
+    marketplace_direction_mode = COALESCE(marketplace_direction_mode, strategy_direction_mode),
+    marketplace_execution_mode = COALESCE(
+      marketplace_execution_mode,
+      strategy_contract->>'execution_mode',
+      CASE
+        WHEN code ~ E'run_(daily|weekly|monthly)\\s*\\(' AND code ~ E'def\\s+handle_data\\s*\\(' THEN 'hybrid'
+        WHEN code ~ E'run_(daily|weekly|monthly)\\s*\\(' THEN 'scheduled'
+        ELSE 'bar'
+      END
+    ),
+    marketplace_execution_frequency = COALESCE(
+      marketplace_execution_frequency,
+      strategy_contract->>'execution_frequency',
+      strategy_primary_frequency
+    ),
+    marketplace_confirmation_frequencies = COALESCE(
+      marketplace_confirmation_frequencies,
+      CASE WHEN jsonb_exists(marketplace_contract, 'confirmation_frequencies') THEN
+        '|' || array_to_string(
+          ARRAY(SELECT jsonb_array_elements_text(marketplace_contract->'confirmation_frequencies')),
+          '|'
+        ) || '|'
+      ELSE NULL END
+    ),
+    marketplace_markets = COALESCE(marketplace_markets, strategy_markets),
+    marketplace_market_types = COALESCE(marketplace_market_types, strategy_market_types)
+WHERE COALESCE(asset_type, 'indicator') = 'script_template';
+
+-- Populate the confirmation-frequency search index after the canonical JSON
+-- contract is visible (UPDATE expressions above read the pre-update row).
+UPDATE qd_indicator_codes
+SET marketplace_confirmation_frequencies = CASE
+      WHEN jsonb_array_length(COALESCE(marketplace_contract->'confirmation_frequencies', '[]'::jsonb)) = 0
+        THEN NULL
+      ELSE '|' || array_to_string(
+        ARRAY(SELECT jsonb_array_elements_text(marketplace_contract->'confirmation_frequencies')),
+        '|'
+      ) || '|'
+    END
+WHERE COALESCE(asset_type, 'indicator') = 'script_template'
+  AND marketplace_contract IS NOT NULL
+  AND marketplace_confirmation_frequencies IS NULL;
 
 CREATE TABLE IF NOT EXISTS qd_indicator_code_versions (
    id serial4 NOT NULL,
@@ -851,6 +1152,51 @@ CREATE INDEX IF NOT EXISTS idx_indicator_code_versions_indicator ON qd_indicator
 CREATE INDEX IF NOT EXISTS idx_indicator_code_versions_user ON qd_indicator_code_versions USING btree (user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_indicator_code_versions_no ON qd_indicator_code_versions USING btree (indicator_id, version_no);
 
+-- Bounded AI authoring memory and unapplied code candidates. These records are
+-- intentionally separate from canonical indicator code/version history.
+CREATE TABLE IF NOT EXISTS qd_ai_workspace_threads (
+   id SERIAL PRIMARY KEY,
+   user_id INTEGER NOT NULL,
+   asset_type VARCHAR(32) NOT NULL,
+   asset_id INTEGER NOT NULL,
+   title VARCHAR(255) DEFAULT '',
+   summary_json TEXT,
+   summary_until_message_id INTEGER,
+   summary_version INTEGER DEFAULT 0,
+   created_at TIMESTAMP DEFAULT NOW(),
+   updated_at TIMESTAMP DEFAULT NOW(),
+   UNIQUE (user_id, asset_type, asset_id)
+);
+CREATE TABLE IF NOT EXISTS qd_ai_workspace_messages (
+   id SERIAL PRIMARY KEY,
+   thread_id INTEGER NOT NULL REFERENCES qd_ai_workspace_threads(id) ON DELETE CASCADE,
+   user_id INTEGER NOT NULL,
+   role VARCHAR(16) NOT NULL,
+   content TEXT NOT NULL,
+   message_type VARCHAR(32) DEFAULT 'chat',
+   change_id INTEGER,
+   metadata_json TEXT,
+   created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS qd_ai_workspace_changes (
+   id SERIAL PRIMARY KEY,
+   thread_id INTEGER NOT NULL REFERENCES qd_ai_workspace_threads(id) ON DELETE CASCADE,
+   user_id INTEGER NOT NULL,
+   asset_type VARCHAR(32) NOT NULL,
+   asset_id INTEGER NOT NULL,
+   base_code_hash VARCHAR(64) NOT NULL,
+   candidate_code TEXT NOT NULL,
+   change_summary_json TEXT,
+   validation_json TEXT,
+   status VARCHAR(24) DEFAULT 'candidate',
+   applied_version_no INTEGER,
+   created_at TIMESTAMP DEFAULT NOW(),
+   updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_qd_ai_workspace_threads_asset ON qd_ai_workspace_threads(user_id, asset_type, asset_id);
+CREATE INDEX IF NOT EXISTS idx_qd_ai_workspace_messages_thread ON qd_ai_workspace_messages(thread_id, id);
+CREATE INDEX IF NOT EXISTS idx_qd_ai_workspace_changes_thread ON qd_ai_workspace_changes(thread_id, id);
+
 -- =============================================================================
 -- 10. Watchlist
 -- =============================================================================
@@ -867,7 +1213,9 @@ CREATE TABLE IF NOT EXISTS qd_watchlist (
     settle_currency VARCHAR(20) NOT NULL DEFAULT '',
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
-    CONSTRAINT uq_watchlist_asset UNIQUE(user_id, market, symbol)
+    CONSTRAINT uq_watchlist_market_context UNIQUE(
+        user_id, market, symbol, exchange_id, market_type, instrument_id
+    )
 );
 
 CREATE INDEX IF NOT EXISTS idx_watchlist_user_id ON qd_watchlist(user_id);
@@ -877,18 +1225,10 @@ ALTER TABLE qd_watchlist ADD COLUMN IF NOT EXISTS market_type VARCHAR(20) NOT NU
 ALTER TABLE qd_watchlist ADD COLUMN IF NOT EXISTS instrument_id VARCHAR(120) NOT NULL DEFAULT '';
 ALTER TABLE qd_watchlist ADD COLUMN IF NOT EXISTS settle_currency VARCHAR(20) NOT NULL DEFAULT '';
 ALTER TABLE qd_watchlist DROP CONSTRAINT IF EXISTS qd_watchlist_user_id_market_symbol_key;
-DELETE FROM qd_watchlist newer
-USING qd_watchlist older
-WHERE newer.user_id = older.user_id
-  AND newer.market = older.market
-  AND newer.symbol = older.symbol
-  AND newer.id < older.id;
-UPDATE qd_watchlist
-SET exchange_id = '', market_type = 'spot', instrument_id = ''
-WHERE exchange_id <> '' OR market_type <> 'spot' OR instrument_id <> '';
-DROP INDEX IF EXISTS uq_watchlist_market_context;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_watchlist_asset
-  ON qd_watchlist(user_id, market, symbol);
+ALTER TABLE qd_watchlist DROP CONSTRAINT IF EXISTS uq_watchlist_asset;
+DROP INDEX IF EXISTS uq_watchlist_asset;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_watchlist_market_context
+  ON qd_watchlist(user_id, market, symbol, exchange_id, market_type, instrument_id);
 
 -- =============================================================================
 -- 10A. Strategy universes and point-in-time membership
@@ -1184,12 +1524,96 @@ CREATE TABLE IF NOT EXISTS qd_backtest_runs (
     status VARCHAR(20) DEFAULT 'success',
     error_message TEXT DEFAULT '',
     result_json TEXT DEFAULT '',
+    result_compacted BOOLEAN NOT NULL DEFAULT FALSE,
+    total_return DOUBLE PRECISION,
+    win_rate DOUBLE PRECISION,
+    total_trades INTEGER,
+    total_executions INTEGER,
+    max_drawdown DOUBLE PRECISION,
+    sharpe_ratio DOUBLE PRECISION,
+    result_status VARCHAR(32) DEFAULT 'unknown',
+    data_kind VARCHAR(32) DEFAULT 'unknown',
+    benchmark_total_return DOUBLE PRECISION,
+    summary_backfilled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW()
 );
+
+ALTER TABLE qd_backtest_runs ADD COLUMN IF NOT EXISTS total_return DOUBLE PRECISION;
+ALTER TABLE qd_backtest_runs ADD COLUMN IF NOT EXISTS win_rate DOUBLE PRECISION;
+ALTER TABLE qd_backtest_runs ADD COLUMN IF NOT EXISTS total_trades INTEGER;
+ALTER TABLE qd_backtest_runs ADD COLUMN IF NOT EXISTS total_executions INTEGER;
+ALTER TABLE qd_backtest_runs ADD COLUMN IF NOT EXISTS max_drawdown DOUBLE PRECISION;
+ALTER TABLE qd_backtest_runs ADD COLUMN IF NOT EXISTS sharpe_ratio DOUBLE PRECISION;
+ALTER TABLE qd_backtest_runs ADD COLUMN IF NOT EXISTS result_status VARCHAR(32) DEFAULT 'unknown';
+ALTER TABLE qd_backtest_runs ADD COLUMN IF NOT EXISTS data_kind VARCHAR(32) DEFAULT 'unknown';
+ALTER TABLE qd_backtest_runs ADD COLUMN IF NOT EXISTS benchmark_total_return DOUBLE PRECISION;
+ALTER TABLE qd_backtest_runs ADD COLUMN IF NOT EXISTS summary_backfilled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE qd_backtest_runs ADD COLUMN IF NOT EXISTS result_compacted BOOLEAN NOT NULL DEFAULT FALSE;
+
+DO $$
+DECLARE
+    run_row RECORD;
+BEGIN
+    FOR run_row IN
+        SELECT id, result_json
+        FROM qd_backtest_runs
+        WHERE summary_backfilled = FALSE
+    LOOP
+        BEGIN
+            UPDATE qd_backtest_runs
+            SET total_return = ((regexp_match(run_row.result_json, '"totalReturn"[[:space:]]*:[[:space:]]*(-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?)'))[1])::DOUBLE PRECISION,
+                win_rate = ((regexp_match(run_row.result_json, '"winRate"[[:space:]]*:[[:space:]]*(-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?)'))[1])::DOUBLE PRECISION,
+                total_trades = ((regexp_match(run_row.result_json, '"totalTrades"[[:space:]]*:[[:space:]]*([0-9]+)'))[1])::INTEGER,
+                total_executions = ((regexp_match(run_row.result_json, '"totalExecutions"[[:space:]]*:[[:space:]]*([0-9]+)'))[1])::INTEGER,
+                result_status = COALESCE((regexp_match(run_row.result_json, '"resultStatus"[[:space:]]*:[[:space:]]*"([^"]+)"'))[1], 'unknown'),
+                data_kind = COALESCE((regexp_match(run_row.result_json, '"dataProvenance"[[:space:]]*:[[:space:]]*[{][^}]*"kind"[[:space:]]*:[[:space:]]*"([^"]+)"'))[1], 'unknown'),
+                benchmark_total_return = ((regexp_match(run_row.result_json, '"benchmarkTotalReturn"[[:space:]]*:[[:space:]]*(-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?)'))[1])::DOUBLE PRECISION,
+                summary_backfilled = TRUE
+            WHERE id = run_row.id;
+        EXCEPTION WHEN OTHERS THEN
+            UPDATE qd_backtest_runs
+            SET result_status = 'unknown', data_kind = 'unknown', summary_backfilled = TRUE
+            WHERE id = run_row.id;
+        END;
+    END LOOP;
+END $$;
+
+-- Historical backtests used to duplicate several large time-series arrays in
+-- result_json. Keep the authoritative detail tables and scalar summaries, then
+-- release the monolithic payload. Legacy rows stay marked non-compacted so the
+-- service hydrates their bounded trades/equity detail tables on demand.
+DO $$
+DECLARE
+    run_row RECORD;
+BEGIN
+    FOR run_row IN
+        SELECT id, result_json
+        FROM qd_backtest_runs
+        WHERE result_compacted = FALSE AND result_json IS NOT NULL AND result_json <> '{}'
+    LOOP
+        BEGIN
+            UPDATE qd_backtest_runs
+            SET max_drawdown = COALESCE(
+                    max_drawdown,
+                    ((regexp_match(run_row.result_json, '"maxDrawdown"[[:space:]]*:[[:space:]]*(-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?)'))[1])::DOUBLE PRECISION
+                ),
+                sharpe_ratio = COALESCE(
+                    sharpe_ratio,
+                    ((regexp_match(run_row.result_json, '"sharpeRatio"[[:space:]]*:[[:space:]]*(-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?)'))[1])::DOUBLE PRECISION
+                ),
+                result_json = '{}'
+            WHERE id = run_row.id;
+        EXCEPTION WHEN OTHERS THEN
+            UPDATE qd_backtest_runs SET result_json = '{}' WHERE id = run_row.id;
+        END;
+    END LOOP;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_user_id ON qd_backtest_runs(user_id);
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_strategy_id ON qd_backtest_runs(strategy_id);
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_source_id ON qd_backtest_runs(source_id);
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_user_recent ON qd_backtest_runs(user_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_user_source_recent ON qd_backtest_runs(user_id, source_id, id DESC);
 
 CREATE TABLE IF NOT EXISTS qd_backtest_trades (
     id SERIAL PRIMARY KEY,
@@ -1241,15 +1665,54 @@ CREATE TABLE IF NOT EXISTS qd_factor_research_runs (
     manifest_json TEXT NOT NULL DEFAULT '{}',
     code_hash VARCHAR(128) DEFAULT '',
     result_json TEXT NOT NULL DEFAULT '{}',
+    rank_ic DOUBLE PRECISION,
+    icir DOUBLE PRECISION,
+    coverage DOUBLE PRECISION,
+    net_long_short_return DOUBLE PRECISION,
+    observation_count INTEGER,
+    summary_backfilled BOOLEAN NOT NULL DEFAULT TRUE,
     status VARCHAR(20) DEFAULT 'success',
     error_message TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT NOW()
 );
 
+ALTER TABLE qd_factor_research_runs ADD COLUMN IF NOT EXISTS rank_ic DOUBLE PRECISION;
+ALTER TABLE qd_factor_research_runs ADD COLUMN IF NOT EXISTS icir DOUBLE PRECISION;
+ALTER TABLE qd_factor_research_runs ADD COLUMN IF NOT EXISTS coverage DOUBLE PRECISION;
+ALTER TABLE qd_factor_research_runs ADD COLUMN IF NOT EXISTS net_long_short_return DOUBLE PRECISION;
+ALTER TABLE qd_factor_research_runs ADD COLUMN IF NOT EXISTS observation_count INTEGER;
+ALTER TABLE qd_factor_research_runs ADD COLUMN IF NOT EXISTS summary_backfilled BOOLEAN NOT NULL DEFAULT FALSE;
+
+DO $$
+DECLARE
+    run_row RECORD;
+BEGIN
+    FOR run_row IN
+        SELECT id, result_json
+        FROM qd_factor_research_runs
+        WHERE summary_backfilled = FALSE
+    LOOP
+        BEGIN
+            UPDATE qd_factor_research_runs
+            SET rank_ic = ((regexp_match(run_row.result_json, '"rankIc"[[:space:]]*:[[:space:]]*(-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?)'))[1])::DOUBLE PRECISION,
+                icir = ((regexp_match(run_row.result_json, '"icir"[[:space:]]*:[[:space:]]*(-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?)'))[1])::DOUBLE PRECISION,
+                coverage = ((regexp_match(run_row.result_json, '"coverage"[[:space:]]*:[[:space:]]*(-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?)'))[1])::DOUBLE PRECISION,
+                net_long_short_return = ((regexp_match(run_row.result_json, '"netLongShortReturn"[[:space:]]*:[[:space:]]*(-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?)'))[1])::DOUBLE PRECISION,
+                observation_count = 0,
+                summary_backfilled = TRUE
+            WHERE id = run_row.id;
+        EXCEPTION WHEN OTHERS THEN
+            UPDATE qd_factor_research_runs SET observation_count = 0, summary_backfilled = TRUE WHERE id = run_row.id;
+        END;
+    END LOOP;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_factor_research_runs_user_id
   ON qd_factor_research_runs(user_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_factor_research_runs_source_id
   ON qd_factor_research_runs(source_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_factor_research_runs_user_source_recent
+  ON qd_factor_research_runs(user_id, source_id, id DESC);
 
 -- =============================================================================
 -- 13. Exchange Credentials
@@ -1355,6 +1818,12 @@ CREATE TABLE IF NOT EXISTS qd_market_symbols (
     instrument_id VARCHAR(120) NOT NULL DEFAULT '',
     settle_currency VARCHAR(20) NOT NULL DEFAULT '',
     asset_class VARCHAR(20) NOT NULL DEFAULT 'crypto',
+    product_type VARCHAR(32) NOT NULL DEFAULT 'crypto',
+    api_family VARCHAR(24) NOT NULL DEFAULT 'spot',
+    underlying_market VARCHAR(32) NOT NULL DEFAULT '',
+    underlying_symbol VARCHAR(50) NOT NULL DEFAULT '',
+    product_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+    metadata_updated_at TIMESTAMPTZ,
     currency VARCHAR(10) DEFAULT '',
     is_active INTEGER DEFAULT 1,
     is_hot INTEGER DEFAULT 0,
@@ -1386,6 +1855,12 @@ ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS market_type VARCHAR(20) N
 ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS instrument_id VARCHAR(120) NOT NULL DEFAULT '';
 ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS settle_currency VARCHAR(20) NOT NULL DEFAULT '';
 ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS asset_class VARCHAR(20) NOT NULL DEFAULT 'crypto';
+ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS product_type VARCHAR(32) NOT NULL DEFAULT 'crypto';
+ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS api_family VARCHAR(24) NOT NULL DEFAULT 'spot';
+ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS underlying_market VARCHAR(32) NOT NULL DEFAULT '';
+ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS underlying_symbol VARCHAR(50) NOT NULL DEFAULT '';
+ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS product_meta JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS metadata_updated_at TIMESTAMPTZ;
 UPDATE qd_market_symbols SET asset_class = 'equity'
 WHERE market IN ('CNStock', 'HKStock', 'USStock', 'MOEX') AND asset_class = 'crypto';
 UPDATE qd_market_symbols SET asset_class = 'forex'
@@ -1406,6 +1881,8 @@ WHERE market = 'USStock' AND asset_class = 'etf' AND symbol IN (
 ALTER TABLE qd_market_symbols DROP CONSTRAINT IF EXISTS qd_market_symbols_market_symbol_key;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_market_symbols_venue_instrument
   ON qd_market_symbols(market, symbol, exchange, market_type, instrument_id);
+CREATE INDEX IF NOT EXISTS idx_market_symbols_product_catalog
+  ON qd_market_symbols(market, exchange, market_type, product_type, is_active);
 
 UPDATE qd_market_symbols
 SET is_active = 0
@@ -2114,6 +2591,35 @@ CREATE TABLE IF NOT EXISTS qd_quick_trades (
 CREATE INDEX IF NOT EXISTS idx_quick_trades_user    ON qd_quick_trades(user_id);
 CREATE INDEX IF NOT EXISTS idx_quick_trades_created ON qd_quick_trades(created_at DESC);
 
+CREATE TABLE IF NOT EXISTS qd_ai_decisions (
+    id BIGSERIAL PRIMARY KEY,
+    decision_uid VARCHAR(64) NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL DEFAULT 0,
+    source_type VARCHAR(24) NOT NULL,
+    source_id BIGINT NOT NULL DEFAULT 0,
+    strategy_run_id BIGINT NOT NULL DEFAULT 0,
+    order_intent_id BIGINT NOT NULL DEFAULT 0,
+    symbol VARCHAR(80) NOT NULL DEFAULT '',
+    action VARCHAR(40) NOT NULL DEFAULT '',
+    market_type VARCHAR(24) NOT NULL DEFAULT '',
+    provider VARCHAR(24) NOT NULL DEFAULT 'none',
+    model VARCHAR(120) NOT NULL DEFAULT '',
+    decision VARCHAR(24) NOT NULL,
+    allowed BOOLEAN NOT NULL DEFAULT TRUE,
+    confidence DECIMAL(8, 6),
+    reason TEXT NOT NULL DEFAULT '',
+    fallback_reason TEXT NOT NULL DEFAULT '',
+    probabilities_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    checks_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    request_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_decisions_strategy
+    ON qd_ai_decisions(source_type, source_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_decisions_user
+    ON qd_ai_decisions(user_id, created_at DESC);
+
 -- Migration: Add commission tracking columns to existing qd_quick_trades.
 -- (Introduced in v3.0.8. Pre-existing rows default to 0 / '' which is the
 
@@ -2154,7 +2660,7 @@ DROP TABLE IF EXISTS qd_polymarket_markets CASCADE;
 -- =============================================================================
 
 -- =============================================================================
--- These tables back the multi-agent runtime (see docs/agent/AI_INTEGRATION_DESIGN.md).
+-- These tables back the Agent Gateway runtime (see docs/agent/agent-openapi.json).
 -- They are tenant-scoped via user_id and stay isolated from human JWT sessions.
 
 CREATE TABLE IF NOT EXISTS qd_agent_tokens (
@@ -2291,3 +2797,58 @@ DO $$
 BEGIN
     RAISE NOTICE 'QuantDinger PostgreSQL schema initialized successfully!';
 END $$;
+
+CREATE TABLE IF NOT EXISTS qd_fundamental_sync_jobs (
+    id BIGSERIAL PRIMARY KEY,
+    universe_id BIGINT NOT NULL REFERENCES qd_universes(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    mode VARCHAR(20) NOT NULL CHECK (mode IN ('history', 'current')),
+    status VARCHAR(20) NOT NULL DEFAULT 'queued',
+    fields_json JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fundamental_sync_active
+    ON qd_fundamental_sync_jobs(universe_id) WHERE status IN ('queued', 'running');
+CREATE TABLE IF NOT EXISTS qd_fundamental_sync_items (
+    id BIGSERIAL PRIMARY KEY,
+    job_id BIGINT NOT NULL REFERENCES qd_fundamental_sync_jobs(id) ON DELETE CASCADE,
+    market VARCHAR(50) NOT NULL,
+    symbol VARCHAR(80) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    token VARCHAR(40),
+    lease_until TIMESTAMPTZ,
+    retry_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    error VARCHAR(200) NOT NULL DEFAULT '',
+    error_detail VARCHAR(500) NOT NULL DEFAULT '',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(job_id, market, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_fundamental_sync_pending ON qd_fundamental_sync_items(status, retry_at);
+CREATE TABLE IF NOT EXISTS qd_fundamental_sync_schedules (
+    id BIGSERIAL PRIMARY KEY,
+    universe_id BIGINT NOT NULL UNIQUE REFERENCES qd_universes(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    mode VARCHAR(20) NOT NULL DEFAULT 'history',
+    fields_json JSONB NOT NULL DEFAULT '["revenue", "net_income", "net_income_ttm", "book_value", "shareholder_equity", "total_debt", "free_cash_flow", "shares_outstanding", "market_cap", "pe_ratio", "pb_ratio", "return_on_equity", "revenue_growth", "debt_to_equity"]'::jsonb,
+    next_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE qd_fundamental_sync_jobs ADD COLUMN IF NOT EXISTS refresh_policy VARCHAR(20) NOT NULL DEFAULT 'full';
+ALTER TABLE qd_fundamental_sync_jobs ADD COLUMN IF NOT EXISTS skipped_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE qd_fundamental_sync_items ADD COLUMN IF NOT EXISTS error_detail VARCHAR(500) NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_fundamental_sync_symbol_check ON qd_fundamental_sync_items(market, symbol, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS qd_exchange_order_pnl (
+    credential_id INTEGER NOT NULL,
+    exchange_id VARCHAR(50) NOT NULL,
+    market_type VARCHAR(20) NOT NULL,
+    symbol VARCHAR(80) NOT NULL,
+    exchange_order_id VARCHAR(160) NOT NULL,
+    expected_quantity NUMERIC(36,18) NOT NULL DEFAULT 0,
+    report JSONB NOT NULL DEFAULT '{}'::jsonb,
+    checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (credential_id, exchange_id, market_type, symbol, exchange_order_id)
+);
+CREATE INDEX IF NOT EXISTS idx_exchange_pnl_checked ON qd_exchange_order_pnl(credential_id, checked_at);

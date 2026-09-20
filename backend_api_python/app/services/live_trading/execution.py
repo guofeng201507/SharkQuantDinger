@@ -18,7 +18,7 @@ from app.services.live_trading.okx import OkxClient
 from app.services.live_trading.bitget import BitgetMixClient
 from app.services.live_trading.bitget_spot import BitgetSpotClient
 from app.services.live_trading.bybit import BybitClient
-from app.services.live_trading.gate import GateSpotClient, GateUsdtFuturesClient
+from app.services.live_trading.gate import GateSpotClient, GateStockClient, GateUsdtFuturesClient
 
 # Lazy import HTX
 HtxClient = None
@@ -134,7 +134,7 @@ def place_order_from_signal(
             qty, _meta = clamp_spot_close_quantity(client, symbol=symbol, requested_qty=qty)
             if qty <= 0:
                 raise LiveTradingError(
-                    "Insufficient spot base balance to close (fees or balance mismatch)"
+                    "strategyRuntime.spotBalanceInsufficient"
                 )
         elif side == "buy" and not reduce_only:
             if quote_amt <= 0 and qty > 0:
@@ -232,6 +232,13 @@ def place_order_from_signal(
             qty=qty,
             reduce_only=reduce_only,
             pos_side=pos_side,
+            client_order_id=client_order_id,
+        )
+    if isinstance(client, GateStockClient):
+        return client.place_market_order(
+            symbol=symbol,
+            side=side,
+            size=qty,
             client_order_id=client_order_id,
         )
     if isinstance(client, GateSpotClient):

@@ -88,7 +88,11 @@ class CredentialRenameRequestSchema(Schema):
 class BillingOrderRequestSchema(Schema):
     plan = fields.String(
         required=True,
-        validate=validate.OneOf(("monthly", "yearly", "lifetime")),
+        validate=validate.Length(min=1, max=64),
+    )
+    currency = fields.String(
+        load_default="USDT",
+        validate=validate.OneOf(("USDT", "USDC")),
     )
     chain = fields.String(
         allow_none=True,
@@ -100,6 +104,7 @@ class BillingOrderRequestSchema(Schema):
     def normalize_values(self, data, **kwargs):
         normalized = dict(data or {})
         normalized["plan"] = str(normalized.get("plan") or "").strip().lower()
+        normalized["currency"] = str(normalized.get("currency") or "USDT").strip().upper()
         if normalized.get("chain") not in (None, ""):
             normalized["chain"] = str(normalized["chain"]).strip().upper()
         else:
@@ -127,6 +132,7 @@ class QuickTradeOrderRequestSchema(Schema):
     source = fields.String(load_default="manual", validate=validate.Length(max=64))
     margin_mode = fields.String(load_default="", validate=validate.Length(max=16))
     marginMode = fields.String(load_default="", validate=validate.Length(max=16))
+    ai_decision_filter = fields.Boolean(load_default=False)
 
     @pre_load
     def normalize_values(self, data, **kwargs):
@@ -169,6 +175,10 @@ class QuickTradeCloseRequestSchema(Schema):
             if key in normalized:
                 normalized[key] = str(normalized[key] or "").strip().lower()
         return normalized
+
+
+class QuickTradeCancelRequestSchema(Schema):
+    trade_id = fields.Integer(required=True, validate=validate.Range(min=1))
 
 
 class UserInfoSchema(Schema):
