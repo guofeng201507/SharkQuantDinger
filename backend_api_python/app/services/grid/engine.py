@@ -21,6 +21,10 @@ from app.services.grid.levels import GridCellSpec, generate_cells, generate_leve
 from app.services.grid.resting_orders_repo import GridRestingOrder, GridRestingOrderRepository
 from app.services.grid.runtime_state import load_grid_resting_state, persist_grid_resting_state
 from app.services.live_trading.grid_cells import GridCellRepository, GridCellState
+from app.services.live_trading.limit_price_safety import (
+    is_marketable_limit_price,
+    normalize_marketable_limit_price,
+)
 from app.utils.logger import get_logger
 from app.utils.strategy_runtime_logs import append_strategy_log
 
@@ -88,6 +92,7 @@ class GridEngine:
         self._exchange_open_orders_cache: Optional[Tuple[float, List[Dict[str, Any]]]] = None
         self._exchange_reservation_logged: set[str] = set()
         self._last_reduce_only_conflict_ts = 0.0
+        self._last_market_price = 0.0
         self._startup_initial_fills: List[Dict[str, Any]] = []
 
     @property
@@ -173,6 +178,11 @@ class GridEngine:
     def set_runtime_params(self, params: Dict[str, Any]) -> None:
         self._runtime_params = dict(params or {})
 
+    def _observe_market_price(self, price: float) -> None:
+        value = float(price or 0.0)
+        if value > 0:
+            self._last_market_price = value
+
     def _qty_from_usdt(self, usdt: float, price: float) -> float:
         if price <= 0 or usdt <= 0:
             return 0.0
@@ -187,10 +197,25 @@ class GridEngine:
     def bootstrap(self, current_price: float) -> Tuple[bool, str]:
         if current_price <= 0:
             return False, "invalid price"
+        self._observe_market_price(current_price)
         levels, cells = self._levels_and_cells()
         if not cells:
             return False, "failed to generate grid cells"
         self._cells.bootstrap_idle_cells(self.strategy_id, self.symbol, levels)
+        bot_params = (
+            self.trading_config.get("bot_params")
+            if isinstance(self.trading_config.get("bot_params"), dict)
+            else {}
+        )
+        try:
+            materialized_anchor = float(bot_params.get("_dynamicAnchorPrice") or 0.0)
+        except (TypeError, ValueError):
+            materialized_anchor = 0.0
+        if materialized_anchor > 0:
+            persist_grid_resting_state(
+                self.strategy_id,
+                {"dynamic_anchor_price": materialized_anchor},
+            )
         self._bootstrapped = True
         append_strategy_log(
             self.strategy_id,
@@ -199,6 +224,57 @@ class GridEngine:
             f"bounds [{levels[0]:.4f}, {levels[-1]:.4f}]",
         )
         return True, ""
+
+    def reconcile_grid_ladder_orders(self) -> int:
+        """Cancel confirmed working orders that belong to a stale price ladder."""
+        if not self._bootstrapped:
+            return 0
+        _, cells = self._levels_and_cells()
+        cell_map = {int(cell.index): cell for cell in cells}
+        mismatched: List[GridRestingOrder] = []
+        for order in self._orders.list_open(self.strategy_id):
+            cell = cell_map.get(int(order.cell_index))
+            purpose = str(order.purpose or "")
+            if cell is None:
+                mismatched.append(order)
+                continue
+            if purpose in {"long_entry", "short_exit"}:
+                expected_price = float(cell.lower_price or 0.0)
+            elif purpose in {"long_exit", "short_entry"}:
+                expected_price = float(cell.upper_price or 0.0)
+            else:
+                continue
+            actual_price = float(order.price or 0.0)
+            tolerance = max(1e-8, expected_price * 1e-8)
+            if expected_price <= 0 or abs(actual_price - expected_price) > tolerance:
+                mismatched.append(order)
+        if not mismatched:
+            return 0
+        try:
+            client = self._create_client()
+        except Exception as exc:
+            logger.warning(
+                "grid stale-ladder reconciliation unavailable sid=%s: %s",
+                self.strategy_id,
+                exc,
+            )
+            return 0
+        cancelled = 0
+        for order in mismatched:
+            if self._cancel_confirmed_order(client, order):
+                cancelled += 1
+        if cancelled:
+            self._cells.release_cancelled_working_orders(
+                self.strategy_id,
+                self.symbol,
+            )
+            logger.info(
+                "Grid reconciled stale ladder sid=%s cancelled=%s mismatched=%s",
+                self.strategy_id,
+                cancelled,
+                len(mismatched),
+            )
+        return cancelled
 
     def _has_initial_market_trade(self) -> bool:
         """True when a verified grid initial market fill was recorded in L2."""
@@ -1041,6 +1117,7 @@ class GridEngine:
     def sync_grid_orders(self, current_price: float) -> int:
         if self._stop_requested or not self._bootstrapped or self._paused_entries or current_price <= 0:
             return 0
+        self._observe_market_price(current_price)
         if self._runtime_params.get("waterfall_pause"):
             return 0
         direction = self.cfg.grid_direction
@@ -1462,6 +1539,7 @@ class GridEngine:
         """Re-hang grid-sized exits for cells that hold inventory but lost their working exit order."""
         if self._stop_requested or not self._bootstrapped or current_price <= 0:
             return 0
+        self._observe_market_price(current_price)
         direction = self.cfg.grid_direction
         if direction not in ("long", "short", "neutral"):
             return 0
@@ -1530,6 +1608,7 @@ class GridEngine:
         """
         if self._stop_requested or not self._bootstrapped or current_price <= 0:
             return 0
+        self._observe_market_price(current_price)
         direction = self.cfg.grid_direction
         if direction not in ("long", "short"):
             return 0
@@ -1647,6 +1726,20 @@ class GridEngine:
         px = float(price or 0)
         if px <= 0:
             return False
+        reference_price = float(self._last_market_price or 0.0)
+        crossed_market = False
+        if reference_price > 0:
+            crossed_market = is_marketable_limit_price(
+                side=side,
+                limit_price=px,
+                reference_price=reference_price,
+            )
+            if crossed_market:
+                px = normalize_marketable_limit_price(
+                    side=side,
+                    limit_price=px,
+                    reference_price=reference_price,
+                )
         if reduce_only and time.time() - float(self._last_reduce_only_conflict_ts or 0.0) < 5.0:
             return False
         usdt = self._grid_budget_usdt(cell.index)
@@ -1685,6 +1778,7 @@ class GridEngine:
             # Exit (reduce-only) orders may need to cross when price is above/below the grid line.
             post_only = (
                 not reduce_only
+                and not crossed_market
                 and self.cfg.order_mode in ("maker", "limit", "limit_first", "maker_then_market")
             )
             if self.order_guard and not self.order_guard():
@@ -1855,6 +1949,7 @@ class GridEngine:
             symbol=self.symbol, signal_type=_PURPOSE_TO_SIGNAL.get(purpose, ''),
             gross_quantity=fq, fees_by_ccy=fees_by_ccy or {})
         px = float(avg_price or 0)
+        self._observe_market_price(px)
         persisted_cell = self._cell_record(cell.index)
         persisted_state = GridCellState.parse(
             getattr(persisted_cell, "state", GridCellState.IDLE)
@@ -1983,6 +2078,7 @@ class GridEngine:
         upper, lower = self.cfg.effective_bounds(self._runtime_params)
         if upper <= lower or current_price <= 0:
             return False
+        self._observe_market_price(current_price)
         action = self.cfg.boundary_action
         out_of_low = current_price < lower
         out_of_high = current_price > upper

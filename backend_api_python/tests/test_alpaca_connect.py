@@ -2,6 +2,8 @@ from uuid import UUID
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.services.alpaca_trading.client import (
     AlpacaClient,
     AlpacaConfig,
@@ -9,6 +11,7 @@ from app.services.alpaca_trading.client import (
     _format_alpaca_error,
     _id_log_prefix,
     _normalize_equity_price,
+    normalize_base_url,
 )
 
 
@@ -41,6 +44,55 @@ def test_alpaca_authentication_error_is_still_classified():
     message = _format_alpaca_error(RuntimeError(raw))
 
     assert "authentication failed" in message.lower()
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.0.0.1:8080",
+        "http://169.254.169.254",
+        "https://10.0.0.1",
+        "https://api.alpaca.markets.attacker.example",
+        "https://api.alpaca.markets:8443",
+        "https://user:secret@api.alpaca.markets",
+        "https://api.alpaca.markets/internal",
+    ],
+)
+def test_alpaca_base_url_rejects_non_official_destinations(base_url):
+    with pytest.raises(ValueError):
+        normalize_base_url(base_url)
+
+
+def test_alpaca_base_url_accepts_only_canonical_official_hosts():
+    assert normalize_base_url("api.alpaca.markets/v2") == "https://api.alpaca.markets"
+    assert normalize_base_url("https://paper-api.alpaca.markets/") == "https://paper-api.alpaca.markets"
+
+
+@patch("app.services.alpaca_trading.client._ensure_alpaca")
+def test_alpaca_connect_revalidates_mutated_base_url_before_sdk_call(mock_ensure):
+    config = AlpacaConfig(
+        api_key="AKtest",
+        secret_key="secret",
+        paper=False,
+        base_url="https://api.alpaca.markets",
+    )
+    config.base_url = "http://127.0.0.1:8080"
+
+    assert AlpacaClient(config).connect() is False
+    mock_ensure.assert_not_called()
+
+
+@patch("app.services.alpaca_trading.client._ensure_alpaca")
+def test_alpaca_connect_rejects_environment_host_mismatch(mock_ensure):
+    client = AlpacaClient(AlpacaConfig(
+        api_key="AKtest",
+        secret_key="secret",
+        paper=False,
+        base_url="https://paper-api.alpaca.markets",
+    ))
+
+    assert client.connect() is False
+    mock_ensure.assert_not_called()
 
 
 @patch("app.services.alpaca_trading.client._ensure_alpaca")
@@ -187,6 +239,64 @@ def test_equity_market_bracket_prices_are_normalized(mock_ensure, _mock_sleep):
     assert result.success is True
     take_profit_request.assert_called_once_with(limit_price=220.32)
     stop_loss_request.assert_called_once_with(stop_price=209.12)
+
+
+@patch("app.services.alpaca_trading.client.time.sleep", return_value=None)
+@patch("app.services.alpaca_trading.client._ensure_alpaca")
+def test_market_order_uses_deterministic_client_order_id(mock_ensure, _mock_sleep):
+    market_request = MagicMock()
+    mock_ensure.return_value = {
+        "MarketOrderRequest": market_request,
+        "OrderSide": SimpleNamespace(BUY="buy", SELL="sell"),
+        "TimeInForce": SimpleNamespace(GTC="gtc", DAY="day"),
+    }
+    trading = MagicMock()
+    order = SimpleNamespace(
+        id="order-client-id",
+        client_order_id="qd_4_99",
+        filled_qty="0",
+        filled_avg_price=None,
+        status=SimpleNamespace(value="accepted"),
+        submitted_at="now",
+    )
+    trading.submit_order.return_value = order
+    trading.get_order_by_id.return_value = order
+    client = AlpacaClient(AlpacaConfig(api_key="PKtest", secret_key="secret", paper=True))
+    client._trading_client = trading
+    client._account_id = "account-1"
+
+    result = client.place_market_order(
+        "AAPL",
+        "buy",
+        1,
+        "USStock",
+        client_order_id="qd_4_99",
+    )
+
+    market_request.assert_called_once_with(
+        symbol="AAPL",
+        qty=1,
+        side="buy",
+        time_in_force="day",
+        client_order_id="qd_4_99",
+    )
+    assert result.raw["client_order_id"] == "qd_4_99"
+
+
+def test_order_status_can_recover_by_client_order_id():
+    trading = MagicMock()
+    trading.get_order_by_client_id.return_value = SimpleNamespace(id="recovered-order")
+    client = AlpacaClient(AlpacaConfig(api_key="PKtest", secret_key="secret", paper=True))
+    client._trading_client = trading
+    client._account_id = "account-1"
+    expected = MagicMock()
+    client.get_order_status = MagicMock(return_value=expected)
+
+    result = client.get_order_status_by_client_id("qd_4_99")
+
+    assert result is expected
+    trading.get_order_by_client_id.assert_called_once_with("qd_4_99")
+    client.get_order_status.assert_called_once_with("recovered-order")
 
 
 @patch("app.services.alpaca_trading.client._ensure_alpaca")

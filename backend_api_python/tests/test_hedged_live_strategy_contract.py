@@ -385,7 +385,38 @@ def test_dynamic_grid_anchor_materializes_absolute_live_bounds():
     assert runtime["bot_params"]["lowerPrice"] == pytest.approx(49_000.0)
     assert runtime["bot_params"]["upperPrice"] == pytest.approx(51_000.0)
     assert runtime["bot_params"]["dynamicAnchor"] is False
+    assert runtime["bot_params"]["_dynamicAnchorPrice"] == pytest.approx(50_000.0)
+    assert runtime["bot_params"]["_dynamicAnchorSource"] == "live_price"
     assert source["bot_params"]["lowerPrice"] == 0.98
+
+
+def test_dynamic_grid_anchor_prefers_persisted_runtime_anchor():
+    source = _neutral_grid_strategy()["trading_config"]
+    source["script_runtime_state"] = {
+        "grid_resting": {"dynamic_anchor_price": 48_000.0}
+    }
+
+    runtime = TradingExecutor._materialize_grid_anchor(source, 50_000.0)
+
+    assert runtime["bot_params"]["lowerPrice"] == pytest.approx(47_040.0)
+    assert runtime["bot_params"]["upperPrice"] == pytest.approx(48_960.0)
+    assert runtime["bot_params"]["_dynamicAnchorPrice"] == pytest.approx(48_000.0)
+    assert runtime["bot_params"]["_dynamicAnchorSource"] == "runtime_state"
+
+
+def test_dynamic_grid_anchor_recovers_from_existing_cell_ladder():
+    source = _neutral_grid_strategy()["trading_config"]
+
+    runtime = TradingExecutor._materialize_grid_anchor(
+        source,
+        50_000.0,
+        persisted_grid_bounds=(47_040.0, 48_960.0, 9),
+    )
+
+    assert runtime["bot_params"]["lowerPrice"] == pytest.approx(47_040.0)
+    assert runtime["bot_params"]["upperPrice"] == pytest.approx(48_960.0)
+    assert runtime["bot_params"]["_dynamicAnchorPrice"] == pytest.approx(48_000.0)
+    assert runtime["bot_params"]["_dynamicAnchorSource"] == "persisted_cells"
 
 
 def test_restart_recovery_repeats_live_preflight(monkeypatch):
@@ -556,8 +587,8 @@ class _StopCursor:
 
     def fetchall(self):
         return [
-            {"symbol": "BTC/USDT", "side": "long", "size": 1.0, "current_price": 100.0, "market_type": "swap"},
-            {"symbol": "ETH/USDT", "side": "short", "size": 2.0, "current_price": 50.0, "market_type": "swap"},
+            {"symbol": "BTC/USDT", "side": "long", "size": 1.0, "current_price": 100.0, "market_type": "swap", "strategy_run_id": 901},
+            {"symbol": "ETH/USDT", "side": "short", "size": 2.0, "current_price": 50.0, "market_type": "swap", "strategy_run_id": 901},
         ]
 
     def fetchone(self):
@@ -590,6 +621,39 @@ def test_stop_policy_distinguishes_pause_only_from_pause_and_close(monkeypatch):
     assert [(item.symbol, item.action, item.quantity) for item in submitted] == [
         ("BTC/USDT", "close_long", 1.0),
         ("ETH/USDT", "close_short", 2.0),
+    ]
+
+
+def test_signal_stop_and_close_settles_virtual_positions_without_live_orders(monkeypatch):
+    import app.services.trading_executor as trading_executor_module
+    import app.services.virtual_trading as virtual_trading_module
+
+    executor = TradingExecutor()
+    strategy = _strategy(41, "long")
+    strategy["execution_mode"] = "signal"
+    monkeypatch.setattr(executor, "_load_strategy", lambda _sid: strategy)
+    monkeypatch.setattr(executor, "stop_strategy", lambda _sid: True)
+    monkeypatch.setattr(trading_executor_module, "get_db_connection", lambda: _Db(_StopCursor()))
+
+    submitted = []
+    settled = []
+    executor.order_gateway.submit = lambda request: submitted.append(request) or len(submitted)
+    monkeypatch.setattr(
+        virtual_trading_module,
+        "settle_virtual_pending_order",
+        lambda pending_id: settled.append(pending_id) or {"status": "filled"},
+    )
+
+    result = executor.stop_strategy_with_policy(41, close_positions=True)
+
+    assert result["success"] is True
+    assert result["close_orders_queued"] == 2
+    assert result["close_orders_completed"] == 2
+    assert settled == [1, 2]
+    assert all(item.execution_mode == "signal" for item in submitted)
+    assert [(item.action, item.quantity) for item in submitted] == [
+        ("close_long", 1.0),
+        ("close_short", 2.0),
     ]
 
 

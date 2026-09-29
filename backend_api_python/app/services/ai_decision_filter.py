@@ -6,7 +6,7 @@ import json
 import os
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 import requests
@@ -80,17 +80,6 @@ JEV_QUESTIONS = {
             "insufficient": "Execution evidence is incomplete and no concrete blocking issue can be established.",
         },
     },
-    "entry_decision": {
-        "type": "choice",
-        "instructions": (
-            "Make the final pre-trade decision using the full supplied state. Reject only for concrete evidence of "
-            "a directional contradiction, material portfolio risk, or unsafe execution. Missing evidence alone must not reject."
-        ),
-        "criteria": {
-            "pass": "The entry is supported or mixed, stays within risk limits, and has no concrete blocking condition.",
-            "reject": "Concrete supplied evidence makes this new exposure directionally contradictory, materially risky, or unsafe.",
-        },
-    },
 }
 
 JEV_CHECK_OPTIONS = {
@@ -99,7 +88,6 @@ JEV_CHECK_OPTIONS = {
     "market_regime": {"favorable", "neutral", "adverse", "insufficient"},
     "risk_check": {"clear", "caution", "block", "insufficient"},
     "execution_quality": {"clear", "caution", "block", "insufficient"},
-    "entry_decision": {"pass", "reject"},
 }
 
 
@@ -109,6 +97,7 @@ class AIDecisionRequest:
     source_type: str
     symbol: str
     action: str
+    source_id: int = 0
     market_type: str = ""
     order_type: str = "market"
     quantity: float = 0.0
@@ -135,6 +124,7 @@ class AIDecisionResult:
     checks: list[dict[str, Any]] = field(default_factory=list)
     latency_ms: int = 0
     fallback_reason: str = ""
+    billing: dict[str, Any] = field(default_factory=dict)
 
     def public_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -161,25 +151,78 @@ class AIDecisionFilter:
 
         failures: list[str] = []
         jev_config = self._jev_config()
+        llm: LLMService | None = None
+        llm_configured = False
+        if not jev_config["api_key"]:
+            try:
+                llm = LLMService()
+                llm_configured = llm.is_configured()
+            except Exception as exc:
+                failures.append(f"llm:{self._safe_error(exc)}")
+                logger.warning("LLM configuration check failed open: %s", exc)
+            if not llm_configured:
+                reason = "ai_provider_unavailable" if failures else "ai_not_configured"
+                result = self._result(
+                    True,
+                    "skipped",
+                    "none",
+                    reason,
+                    decision_id,
+                    started,
+                    fallback_reason="; ".join(failures),
+                )
+                self._persist(request, result)
+                return result
+
+        billing = self._consume_credits(request.user_id, decision_id)
+        if not billing.get("accepted"):
+            status = str(billing.get("message") or "")
+            reason = "billing_insufficient_credits" if status.startswith("insufficient_credits") else "billing_unavailable"
+            result = self._result(
+                True,
+                "skipped",
+                "none",
+                reason,
+                decision_id,
+                started,
+                fallback_reason=status,
+                billing=billing,
+            )
+            self._persist(request, result)
+            return result
+
         if jev_config["api_key"]:
             try:
-                result = self._evaluate_jev(request, decision_id, started, jev_config)
+                result = replace(
+                    self._evaluate_jev(request, decision_id, started, jev_config),
+                    billing=billing,
+                )
                 self._persist(request, result)
                 return result
             except Exception as exc:
                 failures.append(f"jev:{self._safe_error(exc)}")
                 logger.warning("Jev decision failed open: %s", exc)
 
-        llm = LLMService()
-        if llm.is_configured():
+        if llm is None:
             try:
-                result = self._evaluate_llm(request, decision_id, started, failures)
+                llm = LLMService()
+                llm_configured = llm.is_configured()
+            except Exception as exc:
+                failures.append(f"llm:{self._safe_error(exc)}")
+                logger.warning("LLM configuration check failed open: %s", exc)
+        if llm_configured and llm is not None:
+            try:
+                result = replace(
+                    self._evaluate_llm(request, decision_id, started, failures, service=llm),
+                    billing=billing,
+                )
                 self._persist(request, result)
                 return result
             except Exception as exc:
                 failures.append(f"llm:{self._safe_error(exc)}")
                 logger.warning("LLM decision failed open: %s", exc)
 
+        billing = self._refund_credits(request.user_id, billing)
         reason = "ai_not_configured" if not failures else "ai_provider_unavailable"
         result = self._result(
             True,
@@ -189,6 +232,7 @@ class AIDecisionFilter:
             decision_id,
             started,
             fallback_reason="; ".join(failures),
+            billing=billing,
         )
         self._persist(request, result)
         return result
@@ -238,15 +282,18 @@ class AIDecisionFilter:
                 "probabilities": probabilities,
             })
 
-        min_confidence = max(0.0, min(float(config.get("min_confidence") or 0.65), 1.0))
-        for name in ("entry_decision", "risk_check", "execution_quality"):
+        min_confidence = max(0.0, min(float(config.get("min_confidence") or 0.55), 1.0))
+        for name in ("risk_check", "execution_quality"):
             confidence = results[name][2]
             if confidence is None or confidence < min_confidence:
-                raise ValueError(f"Jev confidence below threshold for {name}")
+                confidence_text = "missing" if confidence is None else f"{confidence:.3f}"
+                raise ValueError(
+                    f"Jev confidence below threshold for {name} "
+                    f"(confidence={confidence_text}, threshold={min_confidence:.3f})"
+                )
 
-        entry_choice, probabilities, confidence = results["entry_decision"]
-        risk_choice = results["risk_check"][0]
-        execution_choice = results["execution_quality"][0]
+        risk_choice, _, risk_confidence = results["risk_check"]
+        execution_choice, _, execution_confidence = results["execution_quality"]
         signal_choice, _, signal_confidence = results["signal_alignment"]
         regime_choice, _, regime_confidence = results["market_regime"]
         directional_block = (
@@ -256,8 +303,7 @@ class AIDecisionFilter:
             and float(regime_confidence or 0) >= min_confidence
         )
         allowed = (
-            entry_choice == "pass"
-            and risk_choice != "block"
+            risk_choice != "block"
             and execution_choice != "block"
             and not directional_block
         )
@@ -271,7 +317,15 @@ class AIDecisionFilter:
         elif directional_block:
             reason = "jev_entry_rejected:signal_conflict"
         else:
-            reason = "jev_entry_rejected:entry_reject"
+            reason = "jev_entry_rejected"
+        if risk_choice == "block":
+            confidence = risk_confidence
+        elif execution_choice == "block":
+            confidence = execution_confidence
+        elif directional_block:
+            confidence = min(float(signal_confidence or 0), float(regime_confidence or 0))
+        else:
+            confidence = min(float(risk_confidence or 0), float(execution_confidence or 0))
         return self._result(
             allowed,
             final_choice,
@@ -281,7 +335,6 @@ class AIDecisionFilter:
             started,
             model=model,
             confidence=confidence,
-            probabilities=probabilities,
             checks=checks,
         )
 
@@ -291,8 +344,10 @@ class AIDecisionFilter:
         decision_id: str,
         started: float,
         failures: list[str],
+        *,
+        service: LLMService | None = None,
     ) -> AIDecisionResult:
-        service = LLMService()
+        service = service or LLMService()
         model = service.get_default_model()
         content = service.call_llm_api(
             [
@@ -459,12 +514,78 @@ class AIDecisionFilter:
             "base_url": setting("JEV_BASE_URL", "https://api.typesafe.ai/v1"),
             "model": setting("JEV_MODEL", "jev-latest"),
             "timeout_seconds": setting("JEV_TIMEOUT_SECONDS", "8"),
-            "min_confidence": setting("JEV_MIN_CONFIDENCE", "0.65"),
+            "min_confidence": setting("JEV_MIN_CONFIDENCE", "0.55"),
         }
 
     @staticmethod
     def _safe_error(exc: Exception) -> str:
         return " ".join(str(exc or exc.__class__.__name__).split())[:300]
+
+    @staticmethod
+    def _consume_credits(user_id: int, decision_id: str) -> dict[str, Any]:
+        reference_id = f"ai-decision:{decision_id}"
+        receipt: dict[str, Any] = {
+            "feature": "ai_decision_filter",
+            "reference_id": reference_id,
+            "accepted": False,
+            "charged": 0,
+            "refunded": 0,
+            "status": "unavailable",
+            "message": "",
+        }
+        try:
+            from app.services.billing_service import get_billing_service
+
+            billing = get_billing_service()
+            cost = max(0, int(billing.get_feature_cost("ai_decision_filter") or 0))
+            accepted, message = billing.check_and_consume(
+                int(user_id or 0),
+                "ai_decision_filter",
+                reference_id,
+            )
+            status = "charged" if message == "consumed" else "free"
+            return {
+                **receipt,
+                "accepted": bool(accepted),
+                "cost": cost,
+                "charged": cost if accepted and message == "consumed" else 0,
+                "status": status if accepted else "rejected",
+                "message": str(message or ""),
+            }
+        except Exception as exc:
+            logger.warning("AI decision billing failed open: %s", exc)
+            return {**receipt, "message": AIDecisionFilter._safe_error(exc)}
+
+    @staticmethod
+    def _refund_credits(user_id: int, receipt: dict[str, Any]) -> dict[str, Any]:
+        charged = max(0, int(receipt.get("charged") or 0))
+        if charged <= 0:
+            return receipt
+        try:
+            from app.services.billing_service import get_billing_service
+
+            refunded, message = get_billing_service().add_credits(
+                user_id=int(user_id or 0),
+                amount=charged,
+                action="refund",
+                remark="ai_decision_provider_unavailable",
+                reference_id=str(receipt.get("reference_id") or ""),
+            )
+            if refunded:
+                return {
+                    **receipt,
+                    "refunded": charged,
+                    "status": "refunded",
+                    "refund_message": str(message or ""),
+                }
+            return {**receipt, "status": "refund_failed", "refund_message": str(message or "")}
+        except Exception as exc:
+            logger.warning("AI decision billing refund failed: %s", exc)
+            return {
+                **receipt,
+                "status": "refund_failed",
+                "refund_message": AIDecisionFilter._safe_error(exc),
+            }
 
     @staticmethod
     def _result(
@@ -480,6 +601,7 @@ class AIDecisionFilter:
         probabilities: dict[str, Any] | None = None,
         checks: list[dict[str, Any]] | None = None,
         fallback_reason: str = "",
+        billing: dict[str, Any] | None = None,
     ) -> AIDecisionResult:
         return AIDecisionResult(
             allowed=allowed,
@@ -493,6 +615,7 @@ class AIDecisionFilter:
             checks=checks or [],
             latency_ms=max(0, int((time.perf_counter() - started) * 1000)),
             fallback_reason=fallback_reason,
+            billing=billing or {},
         )
 
     @staticmethod
@@ -502,52 +625,102 @@ class AIDecisionFilter:
                 cur = db.cursor()
                 cur.execute(
                     """
-                    INSERT INTO qd_ai_decisions
-                      (decision_uid, user_id, source_type, source_id, strategy_run_id,
-                       order_intent_id, symbol, action, market_type, provider, model,
-                       decision, allowed, confidence, reason, fallback_reason,
-                       probabilities_json, checks_json, request_snapshot, latency_ms, created_at)
-                    VALUES
-                      (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                       %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT (decision_uid) DO NOTHING
-                    """,
-                    (
-                        result.decision_id,
-                        int(request.user_id or 0),
-                        str(request.source_type or ""),
-                        int(request.strategy_id or 0),
-                        int(request.strategy_run_id or 0),
-                        int(request.order_intent_id or 0),
-                        str(request.symbol or ""),
-                        str(request.action or ""),
-                        str(request.market_type or ""),
-                        result.provider,
-                        result.model,
-                        result.decision,
-                        bool(result.allowed),
-                        result.confidence,
-                        result.reason,
-                        result.fallback_reason,
-                        json.dumps(result.probabilities, ensure_ascii=False, default=str),
-                        json.dumps(result.checks, ensure_ascii=False, default=str),
-                        AIDecisionFilter._state_text(request),
-                        int(result.latency_ms),
-                    ),
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'qd_ai_decisions'
+                          AND column_name = 'billing_json'
+                    ) AS present
+                    """
                 )
+                column_row = cur.fetchone()
+                has_billing_column = bool(
+                    column_row.get("present") if isinstance(column_row, dict) else column_row and column_row[0]
+                )
+                values = (
+                    result.decision_id,
+                    int(request.user_id or 0),
+                    str(request.source_type or ""),
+                    int(request.source_id or request.strategy_id or 0),
+                    int(request.strategy_run_id or 0),
+                    int(request.order_intent_id or 0),
+                    str(request.symbol or ""),
+                    str(request.action or ""),
+                    str(request.market_type or ""),
+                    result.provider,
+                    result.model,
+                    result.decision,
+                    bool(result.allowed),
+                    result.confidence,
+                    result.reason,
+                    result.fallback_reason,
+                    json.dumps(result.probabilities, ensure_ascii=False, default=str),
+                    json.dumps(result.checks, ensure_ascii=False, default=str),
+                    AIDecisionFilter._state_text(request),
+                )
+                if has_billing_column:
+                    cur.execute(
+                        """
+                        INSERT INTO qd_ai_decisions
+                          (decision_uid, user_id, source_type, source_id, strategy_run_id,
+                           order_intent_id, symbol, action, market_type, provider, model,
+                           decision, allowed, confidence, reason, fallback_reason,
+                           probabilities_json, checks_json, request_snapshot, billing_json,
+                           latency_ms, created_at)
+                        VALUES
+                          (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                           %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                        ON CONFLICT (decision_uid) DO NOTHING
+                        """,
+                        values + (
+                            json.dumps(result.billing, ensure_ascii=False, default=str),
+                            int(result.latency_ms),
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO qd_ai_decisions
+                          (decision_uid, user_id, source_type, source_id, strategy_run_id,
+                           order_intent_id, symbol, action, market_type, provider, model,
+                           decision, allowed, confidence, reason, fallback_reason,
+                           probabilities_json, checks_json, request_snapshot,
+                           latency_ms, created_at)
+                        VALUES
+                          (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                           %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                        ON CONFLICT (decision_uid) DO NOTHING
+                        """,
+                        values + (int(result.latency_ms),),
+                    )
                 db.commit()
                 cur.close()
         except Exception as exc:
             logger.warning("AI decision audit persistence skipped: %s", exc)
 
 
-def list_ai_decisions(*, user_id: int, source_type: str, source_id: int = 0, limit: int = 100) -> list[dict[str, Any]]:
+def list_ai_decisions(
+    *,
+    user_id: int,
+    source_type: str,
+    source_id: int = 0,
+    symbol: str = "",
+    market_type: str = "",
+    limit: int = 100,
+) -> list[dict[str, Any]]:
     limit = max(1, min(int(limit or 100), 500))
     clauses = ["user_id = %s", "source_type = %s"]
     params: list[Any] = [int(user_id), str(source_type)]
     if source_id:
         clauses.append("source_id = %s")
         params.append(int(source_id))
+    if symbol:
+        clauses.append("UPPER(symbol) = UPPER(%s)")
+        params.append(str(symbol))
+    if market_type:
+        clauses.append("LOWER(market_type) = LOWER(%s)")
+        params.append(str(market_type))
     params.append(limit)
     with get_db_connection() as db:
         cur = db.cursor()
@@ -555,7 +728,9 @@ def list_ai_decisions(*, user_id: int, source_type: str, source_id: int = 0, lim
             f"""
             SELECT decision_uid, source_type, source_id, strategy_run_id, symbol, action,
                    market_type, provider, model, decision, allowed, confidence, reason,
-                   fallback_reason, probabilities_json, checks_json, latency_ms, created_at
+                   fallback_reason, probabilities_json, checks_json,
+                   COALESCE(to_jsonb(qd_ai_decisions) -> 'billing_json', '{{}}'::jsonb) AS billing_json,
+                   latency_ms, created_at
             FROM qd_ai_decisions
             WHERE {' AND '.join(clauses)}
             ORDER BY id DESC
