@@ -496,6 +496,17 @@ CONFIG_SCHEMA = {
                 'description': 'OpenRouter model ID in provider/model format, e.g. openai/gpt-5.4, anthropic/claude-sonnet-4.5',
                 'group': 'openrouter'
             },
+            {
+                'key': 'OPENROUTER_FALLBACK_MODEL',
+                'label': 'OpenRouter Fallback Model',
+                'type': 'text',
+                'default': '',
+                'required': False,
+                'link': 'https://openrouter.ai/models',
+                'link_text': 'settings.link.viewModels',
+                'description': 'Tried when the primary model fails. Leave empty to use the built-in default.',
+                'group': 'openrouter'
+            },
             # OpenAI Direct
             {
                 'key': 'OPENAI_API_KEY',

@@ -1268,7 +1268,9 @@ class LLMService:
                 p,
             )
             static_fallback = self._normalize_model_for_provider(
-                PROVIDER_CONFIGS[p].get("fallback_model") or "",
+                os.getenv(f"{p.value.upper()}_FALLBACK_MODEL", "").strip()
+                or PROVIDER_CONFIGS[p].get("fallback_model")
+                or "",
                 p,
             )
             for candidate in (configured_default, static_fallback):
