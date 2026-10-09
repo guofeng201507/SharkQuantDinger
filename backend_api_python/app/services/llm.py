@@ -292,6 +292,9 @@ class LLMService:
         Intentionally does not spend completion tokens and does not fall back to
         other providers, so a failure here means *this* provider/base URL/key
         combination is unreachable or rejected. Returns ``(ok, detail)``.
+
+        Credentials are only ever sent in headers, never in the URL, so provider
+        errors and request exceptions cannot leak the key.
         """
         p = provider or self.provider
         model = self.get_default_model(p)
@@ -300,7 +303,6 @@ class LLMService:
         key = (self.get_api_key(p) or "").strip()
         base = (self.get_base_url(p) or "").rstrip("/")
         headers: Dict[str, str] = {}
-        params: Dict[str, str] = {}
         if p == LLMProvider.OPENROUTER:
             # OpenRouter's /models is public, so it cannot validate the key.
             # /auth/key requires the bearer token and 401s on a bad key.
@@ -308,14 +310,14 @@ class LLMService:
             headers["Authorization"] = f"Bearer {key}"
         elif p == LLMProvider.GOOGLE:
             url = f"{base}/models"
-            params["key"] = key
+            headers["x-goog-api-key"] = key
         else:
             url = f"{base}/models"
             headers["Authorization"] = f"Bearer {key}"
         try:
-            resp = requests.get(url, headers=headers, params=params, timeout=15)
+            resp = requests.get(url, headers=headers, timeout=15)
         except Exception as exc:
-            return False, f"{p.value}: {redact_secrets(exc)}"
+            return False, f"{p.value}: {exc}"
         if resp.status_code == 200:
             if p == LLMProvider.OPENROUTER:
                 # A provisioning/management key passes /auth/key but is rejected
@@ -330,7 +332,7 @@ class LLMService:
                         "which cannot run inference. Create a normal API key instead."
                     )
             return True, f"{p.value} reachable · model={model}"
-        body = redact_secrets(resp.text[:200]) if resp.text else ""
+        body = resp.text[:200] if resp.text else ""
         return False, f"{p.value}: HTTP {resp.status_code} {body}".strip()
 
     # Legacy properties for backward compatibility
