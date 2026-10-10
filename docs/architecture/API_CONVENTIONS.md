@@ -77,6 +77,27 @@ Obtain JWT via `POST /api/auth/login` (documented in a future migration phase).
 
 ---
 
+## 3.1 Request language (`X-App-Lang`)
+
+Human Web API responses contain user-visible text (indicator marketplace translations, AI skill/tool labels, AI report PDFs, notification bodies, review text, generated opportunity reasons, CN/HK symbol display names). Which edition is returned is decided **per request**, not per deployment:
+
+| Priority | Source | Notes |
+|----------|--------|-------|
+| 1 | `X-App-Lang: <bcp47>` | The app's own UI language — **clients must send this** |
+| 2 | `language` (body or query) | Explicit per-call override |
+| 3 | `Accept-Language` | Browser default; only a fallback |
+
+Resolution lives in `app/utils/language.py::detect_request_language` (`default="en-US"`, supported: `en-US`, `zh-CN`, `zh-TW`, `ja-JP`, `ko-KR`, `vi-VN`, `th-TH`, `ar-SA`, `fr-FR`, `de-DE`, `ru-RU`).
+
+Consequences for API authors:
+
+- Do not read `Accept-Language` directly — it reflects the *browser*, which may differ from the language chosen inside the app.
+- Text that is generated per request must key any server-side cache by language (see `/api/global-market/opportunities`, cached as `trading_opportunities:<lang>`).
+- Multi-language **stored** content uses a JSONB per-language column plus `app/services/indicator_translator.py::pick_localized` (established on `qd_indicator_codes.name_i18n` / `description_i18n`); prefer that shape over adding `*_en` columns.
+- Text with no translation yet falls back to the source language rather than failing the request.
+
+---
+
 ## 4. Visibility tiers
 
 Tag or extension every operation when migrating to flask-smorest:

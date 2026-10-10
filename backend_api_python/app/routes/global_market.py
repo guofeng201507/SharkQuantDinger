@@ -25,6 +25,7 @@ from __future__ import annotations
 from flask import jsonify, request
 from app.openapi.blueprint import HumanBlueprint as Blueprint
 
+from app.utils.language import detect_request_language
 from app.utils.logger import get_logger
 from app.utils.auth import login_required
 
@@ -193,9 +194,12 @@ def trading_opportunities():
     """Scan for trading opportunities across Crypto, US/CN/HK Stocks, and Forex."""
     try:
         force = request.args.get("force", "").lower() in ("true", "1")
+        # Generated copy (signal reasons, CN/HK names) is language specific, so the
+        # cache is keyed per language; the caller's UI language comes from X-App-Lang.
+        lang = detect_request_language(request)
         data = cached_or_compute(
-            "trading_opportunities",
-            compute_trading_opportunities,
+            f"trading_opportunities:{lang}",
+            lambda: compute_trading_opportunities(lang),
             force=force,
         )
 

@@ -154,6 +154,23 @@ def get_menu_footer_config():
     }
     return jsonify({'code': 1, 'msg': 'success', 'data': data})
 
+def _localize_symbol_names(rows, market: str):
+    """Swap stored (Chinese) CN/HK names for English aliases on a non-Chinese UI."""
+    from app.data.symbol_name_en import english_symbol_name
+    from app.utils.language import detect_request_language
+
+    if str(detect_request_language(request)).lower().startswith('zh'):
+        return rows
+    out = []
+    for row in rows or []:
+        if isinstance(row, dict):
+            alias = english_symbol_name(market, row.get('symbol'))
+            if alias:
+                row = {**row, 'name': alias}
+        out.append(row)
+    return out
+
+
 @market_blp.route('/symbols/search', methods=['GET'])
 def search_symbols():
     """
@@ -176,7 +193,7 @@ def search_symbols():
             exchange_id=exchange_id,
             market_type=market_type,
         )
-        return jsonify({'code': 1, 'msg': 'success', 'data': out})
+        return jsonify({'code': 1, 'msg': 'success', 'data': _localize_symbol_names(out, market)})
     except Exception as e:
         logger.error(f"search_symbols failed: {str(e)}")
         logger.error(traceback.format_exc())
@@ -190,7 +207,7 @@ def get_hot_symbols():
         market = (request.args.get('market') or '').strip()
         limit = int(request.args.get('limit') or 10)
         hot = search_hot_symbols(market=market, limit=limit)
-        return jsonify({'code': 1, 'msg': 'success', 'data': hot})
+        return jsonify({'code': 1, 'msg': 'success', 'data': _localize_symbol_names(hot, market)})
     except Exception as e:
         logger.error(f"get_hot_symbols failed: {str(e)}")
         return jsonify({'code': 0, 'msg': str(e), 'data': []}), 500

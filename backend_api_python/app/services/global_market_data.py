@@ -109,15 +109,15 @@ def compute_market_sentiment() -> Dict[str, Any]:
     }
 
 
-def compute_trading_opportunities() -> List[Dict[str, Any]]:
+def compute_trading_opportunities(lang: str = "zh-CN") -> List[Dict[str, Any]]:
     """Run enabled market scanners and return sorted opportunity rows."""
     opportunities: List[Dict[str, Any]] = []
     candidate_scanners = [
-        ("Crypto", lambda: analyze_opportunities_crypto(opportunities)),
-        ("USStock", lambda: analyze_opportunities_stocks(opportunities)),
-        ("Forex", lambda: analyze_opportunities_forex(opportunities)),
-        ("CNStock", lambda: analyze_opportunities_local_stocks(opportunities, "CNStock")),
-        ("HKStock", lambda: analyze_opportunities_local_stocks(opportunities, "HKStock")),
+        ("Crypto", lambda: analyze_opportunities_crypto(opportunities, lang)),
+        ("USStock", lambda: analyze_opportunities_stocks(opportunities, lang)),
+        ("Forex", lambda: analyze_opportunities_forex(opportunities, lang)),
+        ("CNStock", lambda: analyze_opportunities_local_stocks(opportunities, "CNStock", lang)),
+        ("HKStock", lambda: analyze_opportunities_local_stocks(opportunities, "HKStock", lang)),
     ]
     scanners = [(label, fn) for label, fn in candidate_scanners if is_market_visible(label)]
     for label, scanner in scanners:
