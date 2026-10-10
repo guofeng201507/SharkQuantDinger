@@ -92,6 +92,8 @@ ownership or shared state.
 ### Deployment and operations
 
 - [Cloud deployment](deployment/CLOUD_DEPLOYMENT_EN.md)
+- [Self-built frontend deployment](deployment/FRONTEND_DEPLOYMENT_EN.md)
+- [自建前端部署](deployment/FRONTEND_DEPLOYMENT_CN.md)
 - [Distributed runtime deployment and scaling](deployment/DISTRIBUTED_RUNTIME_SCALING.md)
 - [分布式运行时部署与扩容](deployment/DISTRIBUTED_RUNTIME_SCALING_CN.md)
 - [Installation troubleshooting](deployment/INSTALL_TROUBLESHOOTING.md)
