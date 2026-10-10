@@ -11,3 +11,7 @@ def register_routes(app: Flask):
 
     from app.routes.agent_v1 import register as register_agent_v1
     register_agent_v1(app)
+
+    # Prediction Markets (Polymarket) — read-only market analysis API.
+    from app.routes.polymarket import polymarket_bp
+    app.register_blueprint(polymarket_bp, url_prefix='/api/polymarket')
