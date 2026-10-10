@@ -205,6 +205,18 @@ python -m pytest tests/release_gate/test_live_execution_release_gate.py -q
 python -m pytest tests/release_gate/test_robot_strategy_unification.py -q
 ```
 
+Verify the self-service registration chain (send-code -> register -> login). The
+script is self-contained and does not need a working SMTP server: the backend
+persists the verification code in `qd_verification_codes` before sending, so the
+script reads it back from the database. It cleans up the test user and codes on
+exit. `--email` and `--username` default to unique timestamp-based values, so
+repeated runs do not collide; pass `--keep` to retain the created user.
+
+```bash
+docker exec quantdinger-backend python scripts/registration_smoke_test.py \
+    --admin-user "$ADMIN_USER" --admin-password "$ADMIN_PASSWORD"
+```
+
 Security CI additionally runs `pip-audit`, Bandit, Gitleaks, and CodeQL.
 
 ## Contributor rules
