@@ -5,9 +5,10 @@ Hong Kong listings. The API returns an English alias when the caller's UI
 language is not Chinese, so an English interface never falls back to Chinese
 names. This is a display alias only — the symbol itself never changes.
 
-Durable alternative: store per-locale names on the symbol row (the way the
-indicator marketplace does with `name_i18n`), which needs a schema change and a
-backfill; until then this map covers the hot symbols the product surfaces.
+Per-locale names are stored durably on the symbol row in
+`qd_market_symbols.name_i18n` (JSONB, the same pattern as the indicator
+marketplace); this map is the seed/fallback for rows that have no localized
+name yet. Extend the durable map in the database rather than this file.
 """
 from __future__ import annotations
 

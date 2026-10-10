@@ -7,6 +7,7 @@ This module provides helper functions to query hot symbols, search, and get symb
 
 from __future__ import annotations
 
+import json
 from typing import Dict, List, Optional
 
 from app.utils.logger import get_logger
@@ -271,6 +272,47 @@ def get_symbol_name(market: str, symbol: str) -> Optional[str]:
         logger.debug(f"get_symbol_name from DB failed: {e}")
     
     return None
+
+
+def get_symbol_name_i18n(market: str, symbols: List[str]) -> Dict[str, dict]:
+    """Per-locale name payloads (``name_i18n``) for the given symbols.
+
+    Returns ``{UPPER(symbol): {locale: name}}``. Empty dict on any failure so
+    callers can fall back to the single stored ``name``.
+    """
+    m = (market or "").strip()
+    wanted = sorted({str(s or "").strip().upper() for s in symbols or [] if str(s or "").strip()})
+    if not m or not wanted:
+        return {}
+    placeholders = ",".join(["?"] * len(wanted))
+    try:
+        with _get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                f"""
+                SELECT UPPER(symbol) AS symbol_upper, name_i18n
+                FROM qd_market_symbols
+                WHERE market = ? AND UPPER(symbol) IN ({placeholders})
+                """,
+                tuple([m, *wanted]),
+            )
+            rows = cur.fetchall() or []
+            cur.close()
+        out: Dict[str, dict] = {}
+        for row in rows:
+            payload = row.get("name_i18n")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    payload = None
+            key = str(row.get("symbol_upper") or "").strip()
+            if key and isinstance(payload, dict) and payload:
+                out[key] = payload
+        return out
+    except Exception as e:
+        logger.debug(f"get_symbol_name_i18n from DB failed: {e}")
+        return {}
 
 
 def get_all_symbols(market: str = None) -> List[Dict]:

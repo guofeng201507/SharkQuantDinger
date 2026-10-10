@@ -223,9 +223,12 @@ def _indicator_discussion_fallback(existing: str, context: Dict[str, Any], lang:
 
 def _indicator_hint_to_text(hint_code: str, params: Dict[str, Any] | None = None, lang: str = "zh-CN") -> str:
     params = params or {}
+    zh = _is_zh_lang(lang)
     if hint_code == "DECLARED_PARAMS_NOT_READ_VIA_PARAMS_GET":
         names = params.get("names") or []
-        joined = ", ".join(names) or "parameters"
+        joined = ", ".join(names) or ("参数" if zh else "parameters")
+        if zh:
+            return f"声明的参数没有通过 params.get(...) 读取：{joined}。"
         return f"Declared parameters are not being read via params.get(...): {joined}."
     if hint_code == "PARAM_DEFAULT_MISMATCH":
         items = params.get("items") or []
@@ -233,28 +236,45 @@ def _indicator_hint_to_text(hint_code: str, params: Dict[str, Any] | None = None
             f"{item.get('name')}: @param={item.get('declared')}, params.get fallback={item.get('fallback')}"
             for item in items
         ]
-        detail = "; ".join(parts) or "parameter defaults"
+        detail = "; ".join(parts) or ("参数默认值" if zh else "parameter defaults")
+        if zh:
+            return (
+                f"参数默认值不一致：{detail}。"
+                "# @param 注释里的默认值必须与 params.get(..., default) 的兜底值完全一致。"
+            )
         return (
             f"Parameter default mismatch: {detail}. "
             "The # @param default must exactly match the params.get(..., default) fallback."
         )
     if hint_code == "SIGNAL_MARKERS_USE_WHERE_NONE":
+        if zh:
+            return "信号标记使用了 where(..., None).tolist()；建议显式构造 None 列表，避免 NaN 渲染问题。"
         return "Signal markers use where(..., None).tolist(); prefer an explicit None list to avoid NaN rendering issues."
     if hint_code == "MISSING_OUTPUT":
-        return "Missing output dictionary."
+        return "缺少输出字典。" if zh else "Missing output dictionary."
     if hint_code == "EXECUTION_COLUMNS_IGNORED_FOR_INDICATOR":
+        if zh:
+            return "图表指标会忽略执行相关的列。如需回测或实盘，请先改写为 Strategy API V2。"
         return "Execution columns are ignored in chart indicators. Convert this idea to Strategy API V2 before backtesting or live trading."
     if hint_code == "STRATEGY_ANNOTATIONS_IGNORED_FOR_INDICATOR":
+        if zh:
+            return "图表指标中不允许使用 # @strategy 注解。请把风控、仓位、周期和执行规则放到 Strategy API V2 代码里。"
         return "# @strategy annotations are forbidden in chart indicators. Put risk, sizing, timeframe, and execution rules in Strategy API V2 code."
     if hint_code == "MISSING_DF_COPY":
-        return "Missing df = df.copy()."
+        return "缺少 df = df.copy()。" if zh else "Missing df = df.copy()."
     if hint_code == "MISSING_INDICATOR_NAME":
-        return "Missing my_indicator_name."
+        return "缺少 my_indicator_name。" if zh else "Missing my_indicator_name."
     if hint_code == "MISSING_INDICATOR_DESCRIPTION":
-        return "Missing my_indicator_description."
+        return "缺少 my_indicator_description。" if zh else "Missing my_indicator_description."
     if hint_code == "NDARRAY_PANDAS_METHOD_MISUSE":
         symbol = params.get("symbol") or "ndarray"
         method = params.get("method") or "?"
+        if zh:
+            return (
+                f"在 numpy ndarray 上调用了 pandas 方法：{symbol}.{method}(...)。"
+                "请先用 pd.Series(arr, index=df.index) 包装再调用 pandas 方法，"
+                "或改用 pandas 原生写法（.where/.clip/.abs）。"
+            )
         return (
             f"Pandas method called on a numpy ndarray: {symbol}.{method}(...). "
             "Wrap with pd.Series(arr, index=df.index) before calling pandas methods, "
@@ -262,6 +282,12 @@ def _indicator_hint_to_text(hint_code: str, params: Dict[str, Any] | None = None
         )
     if hint_code == "HELPER_RETURNS_NDARRAY":
         names_str = params.get("names_str") or ", ".join(params.get("names") or []) or "helper"
+        if zh:
+            return (
+                f"自定义辅助函数返回了 numpy ndarray：{names_str}。"
+                "对其结果继续调用 .rolling/.fillna/.shift/.ewm/.iloc 会抛 AttributeError；"
+                "请让辅助函数返回 Series（例如 num / den.replace(0, np.nan).fillna(0)）。"
+            )
         return (
             f"User helpers return numpy ndarray: {names_str}. "
             "Downstream .rolling/.fillna/.shift/.ewm/.iloc on the result will AttributeError; "
@@ -270,10 +296,23 @@ def _indicator_hint_to_text(hint_code: str, params: Dict[str, Any] | None = None
     if hint_code == "RUNTIME_ERROR_ON_VERIFY":
         error_type = params.get("error_type") or "RuntimeError"
         detail = params.get("detail") or ""
+        if zh:
+            return f"沙箱试运行抛出 {error_type}：{detail}。"
         return f"Sandbox dry-run raised {error_type}: {detail}."
     if hint_code == "FUTURE_DATA_LEAK":
         snippet = params.get("snippet") or "?"
         kind = params.get("kind") or ""
+        if zh:
+            kind_zh = {
+                "shift": "负数位移",
+                "iloc": "向前 iloc 偏移",
+                "bars_ago": "负数 bars_ago",
+            }.get(kind, kind or "未知模式")
+            return (
+                f"检测到未来数据泄露（{kind_zh}）：{snippet}。"
+                "回测读取了尚未发生的K线，实盘永远无法复现。"
+                "请改用 .shift(N)（N 为正数）或 iloc[i-N] 引用过去的数据。"
+            )
         kind_en = {
             "shift": "negative shift",
             "iloc": "forward iloc offset",
@@ -284,7 +323,7 @@ def _indicator_hint_to_text(hint_code: str, params: Dict[str, Any] | None = None
             "Backtest is reading bars that haven't happened yet, which can NEVER be reproduced live. "
             "Use .shift(N) with positive N or iloc[i-N] to reference the past instead."
         )
-    return f"Code hint detected: {hint_code}"
+    return f"代码检查提示：{hint_code}" if zh else f"Code hint detected: {hint_code}"
 
 
 def _indicator_human_summary(
@@ -313,17 +352,30 @@ def _indicator_human_summary(
         if h.get("code") in remaining_codes
     ]
 
+    zh = _is_zh_lang(lang)
     if auto_fix_applied and auto_fix_succeeded:
-        title = "AI auto-fixed the indicator code and returned a more stable version"
+        title = (
+            "AI 已自动修复指标代码，并返回了更稳定的版本"
+            if zh
+            else "AI auto-fixed the indicator code and returned a more stable version"
+        )
     elif auto_fix_applied:
-        title = "AI attempted to auto-fix the code, but some issues still remain"
+        title = (
+            "AI 尝试自动修复代码，但仍有一些问题未解决"
+            if zh
+            else "AI attempted to auto-fix the code, but some issues still remain"
+        )
     else:
-        title = "AI generated indicator code and it passed the current QA flow"
+        title = (
+            "AI 已生成指标代码，并通过了当前检查流程"
+            if zh
+            else "AI generated indicator code and it passed the current QA flow"
+        )
 
     if returned_candidate == "repaired":
-        returned_text = "The returned code is the auto-fixed version."
+        returned_text = "返回的代码是自动修复后的版本。" if zh else "The returned code is the auto-fixed version."
     else:
-        returned_text = "The returned code is the initially generated version."
+        returned_text = "返回的代码是最初生成的版本。" if zh else "The returned code is the initially generated version."
 
     return {
         "title": title,

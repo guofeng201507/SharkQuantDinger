@@ -7,6 +7,7 @@ from flask import g, jsonify, request
 from app.openapi.blueprint import HumanBlueprint as Blueprint
 
 from app.utils.auth import login_required
+from app.utils.language import detect_request_language
 from app.utils.logger import get_logger
 from app.services.fast_analysis_tasks import (
     acquire_inflight,
@@ -94,7 +95,7 @@ def analyze():
         exchange_id = (data.get('exchange_id') or data.get('exchangeId') or '').strip().lower()
         market_type = (data.get('market_type') or data.get('marketType') or 'spot').strip().lower()
         instrument_id = (data.get('instrument_id') or data.get('instrumentId') or '').strip()
-        language = data.get('language', 'en-US')
+        language = str(data.get('language') or detect_request_language(request))
         model = data.get('model')
         timeframe = data.get('timeframe', '1D')
         async_submit = bool(data.get('async_submit', False))

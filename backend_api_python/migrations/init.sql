@@ -2150,6 +2150,7 @@ CREATE TABLE IF NOT EXISTS qd_market_symbols (
     underlying_market VARCHAR(32) NOT NULL DEFAULT '',
     underlying_symbol VARCHAR(50) NOT NULL DEFAULT '',
     product_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+    name_i18n JSONB NOT NULL DEFAULT '{}'::jsonb,
     metadata_updated_at TIMESTAMPTZ,
     currency VARCHAR(10) DEFAULT '',
     is_active INTEGER DEFAULT 1,
@@ -2187,6 +2188,7 @@ ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS api_family VARCHAR(24) NO
 ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS underlying_market VARCHAR(32) NOT NULL DEFAULT '';
 ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS underlying_symbol VARCHAR(50) NOT NULL DEFAULT '';
 ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS product_meta JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS name_i18n JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE qd_market_symbols ADD COLUMN IF NOT EXISTS metadata_updated_at TIMESTAMPTZ;
 UPDATE qd_market_symbols SET asset_class = 'equity'
 WHERE market IN ('CNStock', 'HKStock', 'USStock', 'MOEX') AND asset_class = 'crypto';

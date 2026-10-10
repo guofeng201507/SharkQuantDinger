@@ -155,16 +155,31 @@ def get_menu_footer_config():
     return jsonify({'code': 1, 'msg': 'success', 'data': data})
 
 def _localize_symbol_names(rows, market: str):
-    """Swap stored (Chinese) CN/HK names for English aliases on a non-Chinese UI."""
+    """Render a non-Chinese display name for CN/HK symbols.
+
+    Prefers the durable per-locale ``name_i18n`` payload stored on the symbol
+    row (same JSONB pattern as the indicator marketplace); falls back to the
+    code alias map for rows that carry no localized name yet.
+    """
+    from app.data.market_symbols_seed import get_symbol_name_i18n
     from app.data.symbol_name_en import english_symbol_name
+    from app.services.indicator_translator import pick_localized
     from app.utils.language import detect_request_language
 
-    if str(detect_request_language(request)).lower().startswith('zh'):
+    lang = str(detect_request_language(request) or "")
+    if lang.lower().startswith('zh'):
         return rows
+    if not rows:
+        return rows
+    market_key = str(market or "").strip()
+    symbols = [str(r.get('symbol') or '') for r in rows if isinstance(r, dict)]
+    i18n_map = get_symbol_name_i18n(market_key, symbols)
     out = []
     for row in rows or []:
         if isinstance(row, dict):
-            alias = english_symbol_name(market, row.get('symbol'))
+            sym = str(row.get('symbol') or '').strip().upper()
+            payload = i18n_map.get(sym)
+            alias = (pick_localized('', payload, lang) if payload else '') or english_symbol_name(market_key, row.get('symbol'))
             if alias:
                 row = {**row, 'name': alias}
         out.append(row)
