@@ -2217,7 +2217,7 @@ UPDATE qd_market_symbols
 SET is_active = 0
 WHERE market = 'Crypto'
   AND exchange <> ''
-  AND exchange NOT IN ('binance', 'bitget', 'bybit', 'okx', 'gate', 'htx');
+  AND LOWER(exchange) NOT IN ('binance', 'bitget', 'bybit', 'okx', 'gate', 'htx');
 
 CREATE TABLE IF NOT EXISTS qd_market_symbol_aliases (
     id SERIAL PRIMARY KEY,
