@@ -41,6 +41,9 @@ UPDATE qd_market_symbols
 SET name_i18n = name_i18n || '{"en-US": "Ping An Bank"}'::jsonb
 WHERE market = 'CNStock' AND symbol = '000001' AND COALESCE(name_i18n->>'en-US', '') = '';
 UPDATE qd_market_symbols
+SET name_i18n = name_i18n || '{"en-US": "China Vanke"}'::jsonb
+WHERE market = 'CNStock' AND symbol = '000002' AND COALESCE(name_i18n->>'en-US', '') = '';
+UPDATE qd_market_symbols
 SET name_i18n = name_i18n || '{"en-US": "Tencent Holdings"}'::jsonb
 WHERE market = 'HKStock' AND symbol = '00700' AND COALESCE(name_i18n->>'en-US', '') = '';
 UPDATE qd_market_symbols
