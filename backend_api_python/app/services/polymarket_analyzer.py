@@ -85,6 +85,17 @@ class PolymarketAnalyzer:
             # 7. 构建分析结果
             analysis_result = {
                 "market_id": market_id,
+                # Snapshot of the market so history rows can show the real
+                # question instead of the numeric id (the frontend reads
+                # `market.title` / `market.question` from the stored payload).
+                "market": {
+                    "id": market.get("id") or market_id,
+                    "question": market.get("question") or "",
+                    "title": market.get("title") or "",
+                    "slug": market.get("slug") or "",
+                    "current_probability": market.get("current_probability"),
+                    "polymarket_url": market.get("polymarket_url") or "",
+                },
                 "ai_predicted_probability": ai_result['predicted_probability'],
                 "market_probability": market['current_probability'],
                 "divergence": ai_result['predicted_probability'] - market['current_probability'],

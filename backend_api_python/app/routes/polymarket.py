@@ -297,8 +297,11 @@ def get_polymarket_history():
             except:
                 result_data = {}
             
-            market_data = result_data.get('market', {})
+            market_data = result_data.get('market') or {}
             analysis_data = result_data.get('analysis', {})
+            # Older rows predate the market snapshot: fall back to the stored
+            # title before showing the bare id.
+            legacy_title = result_data.get('market_title')
             
             # SafeJSONProvider normalizes datetimes to UTC ISO automatically.
             created_at = row.get('created_at')
@@ -307,7 +310,7 @@ def get_polymarket_history():
             items.append({
                 'id': row.get('id'),
                 'market_id': row.get('market_id'),
-                'market_title': market_data.get('question') or market_data.get('title') or f"Market {row.get('market_id')}",
+                'market_title': market_data.get('question') or market_data.get('title') or legacy_title or f"Market {row.get('market_id')}",
                 'market_url': market_data.get('polymarket_url'),
                 'ai_predicted_probability': analysis_data.get('ai_predicted_probability'),
                 'market_probability': analysis_data.get('market_probability'),
