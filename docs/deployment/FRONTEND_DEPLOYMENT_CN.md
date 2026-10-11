@@ -10,7 +10,8 @@
 
 - 宿主机 Nginx 终止 TLS，并把**全部**流量（SPA、`/api`、带 WebSocket Upgrade 头的 `/ws`）转发到
   `127.0.0.1:8888`。
-- `sharkfe-web` —— nginx 托管构建后的 SPA；`127.0.0.1:8888->80`。
+- `sharkfe-web` —— nginx 托管构建后的 SPA；`127.0.0.1:8888->8080`（镜像使用
+  unprivileged nginx，容器内以非 root 监听 `8080`）。
 - `sharkfe-bff` —— Fastify BFF；把 `/api` 与 `/ws` 反代到后端（`http://backend:5000`）。
 - 两个容器都加入已存在的 Docker 网络 `quantdinger_quantdinger-network`（external），因此 BFF 可按服务名
   访问后端。宿主机 Nginx/TLS/DNS 均无需改动。
@@ -49,7 +50,7 @@
        image: sharkfe-web:1
        container_name: sharkfe-web
        ports:
-         - "127.0.0.1:8888:80"
+         - "127.0.0.1:8888:8080"
        depends_on: [bff]
        restart: unless-stopped
        networks: [qdnet]

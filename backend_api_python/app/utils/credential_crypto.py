@@ -45,6 +45,30 @@ def _encryption_secret() -> str:
     return secret
 
 
+def _require(secret: str) -> str:
+    secret = (secret or "").strip()
+    if not secret:
+        raise ValueError("encryption key must not be empty")
+    return secret
+
+
+def encrypt_with_key(key: str, plaintext: str) -> str:
+    """Encrypt with an explicit key. Used by key-rotation tooling, not by request paths."""
+    return _fernet(_require(key)).encrypt((plaintext or "").encode("utf-8")).decode("ascii")
+
+
+def decrypt_with_key(key: str, stored: Any) -> str:
+    """Decrypt with an explicit key. Raises ValueError when the key does not match."""
+    s = stored.decode("utf-8") if isinstance(stored, (bytes, bytearray)) else str(stored or "")
+    s = s.strip()
+    if not s:
+        return ""
+    try:
+        return _fernet(_require(key)).decrypt(s.encode("ascii")).decode("utf-8")
+    except InvalidToken:
+        raise ValueError("ciphertext does not decrypt with the supplied key")
+
+
 def encrypt_credential_blob(plaintext_json: str) -> str:
     """Encrypt JSON text for storage in encrypted_config."""
     if plaintext_json is None:

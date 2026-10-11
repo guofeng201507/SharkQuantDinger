@@ -11,7 +11,8 @@ Validated on `shark.aiorz.cc` (Alibaba Cloud ECS, `x86_64`) on 2026-10-10.
 
 - Host Nginx terminates TLS and forwards **all** traffic (SPA, `/api`, and `/ws` with WebSocket
   upgrade headers) to `127.0.0.1:8888`.
-- `sharkfe-web` — nginx serving the built SPA; `127.0.0.1:8888->80`.
+- `sharkfe-web` — nginx serving the built SPA; `127.0.0.1:8888->8080` (the image
+  uses unprivileged nginx and listens on `8080` as a non-root user).
 - `sharkfe-bff` — Fastify BFF; proxies `/api` and `/ws` to the backend (`http://backend:5000`).
 - Both containers join the existing Docker network `quantdinger_quantdinger-network` (external), so
   the BFF reaches the backend by service name. Host Nginx/TLS/DNS need no change.
@@ -51,7 +52,7 @@ will not run on an `x86_64` server — build natively on the server (recommended
        image: sharkfe-web:1
        container_name: sharkfe-web
        ports:
-         - "127.0.0.1:8888:80"
+         - "127.0.0.1:8888:8080"
        depends_on: [bff]
        restart: unless-stopped
        networks: [qdnet]

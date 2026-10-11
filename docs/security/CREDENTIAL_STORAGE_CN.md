@@ -45,8 +45,41 @@ Key 与 Secret **只存在于这段密文里**——数据库中没有任何明�
 1. **备份 `.env`**（密码管理器或离线保险处）。`CREDENTIAL_ENCRYPTION_KEY` 是主密钥：若它与服务器一起丢失，已存凭据**不可恢复**——这正是加密的意义所在。
 2. `.env.bak*` 同样要保持 `0600`：备份里可能含旧 `SECRET_KEY`，它能解密早期密文。
 3. 数据库导出（pg_dump）里只有密文；仍应正常保管，但其本身不泄漏密钥材料。
-4. 轮换：更换 `CREDENTIAL_ENCRYPTION_KEY` 后旧行仍可读（新→旧解密顺序），但应随后**重加密全部行**，以便彻底废弃旧密钥。
+4. 轮换：**只替换 `CREDENTIAL_ENCRYPTION_KEY` 会让上一把密钥加密的全部行立刻不可读**——解密只尝试「当前密钥」与「旧版 `SECRET_KEY`」。请先在 `.env` 换钥**之前**运行下面的轮换脚本，把全部行重加密后，再废弃旧密钥。
 5. 交易所侧卫生：实盘 key 只开必要权限、关闭提币、优选用子账户、不再使用的 key 及时吊销。
+
+## 密钥轮换步骤
+
+`scripts/rotate_credential_key.py` 会把所有已存密文——券商凭据
+（`qd_exchange_credentials.encrypted_config`）与 TOTP 密钥
+（`qd_user_mfa.secret_encrypted`）——从旧钥重新加密到新钥。安排一个短暂维护窗口：
+
+1. 生成新密钥并以 `0600` 保存，例如 `/root/rotate-keys/new.key`：
+
+   ```bash
+   python3 -c "import secrets; print(secrets.token_hex(32))"
+   ```
+
+2. 停掉所有运行 backend 镜像的服务（backend 与各 worker），确保没有进程继续用旧钥写入。
+3. 在服务器仓库根目录先 dry-run，再 apply：
+
+   ```bash
+   docker compose run --rm --no-deps \
+     -v /root/rotate-keys:/rotate-keys:ro \
+     backend python scripts/rotate_credential_key.py \
+       --new-key-file /rotate-keys/new.key --old-key-file /rotate-keys/old.key
+
+   docker compose run --rm --no-deps \
+     -v /root/rotate-keys:/rotate-keys:ro \
+     backend python scripts/rotate_credential_key.py \
+       --new-key-file /rotate-keys/new.key --old-key-file /rotate-keys/old.key --apply
+   ```
+
+   脚本还会把容器内挂载的 `/app/.env` 中的
+   `CREDENTIAL_ENCRYPTION_KEY`、`SECRET_KEY` 作为旧钥候选，因此旧版密文无需把密钥
+   导出到 shell 即可覆盖。退出码非 0 表示有行无法解密——**通过之前不要在 `.env` 里换钥**。
+4. 把新密钥写进部署 `.env`（`CREDENTIAL_ENCRYPTION_KEY=...`），保持 `chmod 600`，重新启动各服务。
+5. 在界面里验证一次凭据读写（设置 → 券商凭据），随后删除密钥文件、并从备份中清除旧钥。
 
 ## FAQ：为什么 Alpaca 的基础 URL 显示时不带 `/v2`？
 

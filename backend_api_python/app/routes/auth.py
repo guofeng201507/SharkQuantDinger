@@ -106,7 +106,7 @@ def get_security_config():
         return jsonify({'code': 1, 'msg': 'success', 'data': config})
     except Exception as e:
         logger.error(f"get_security_config error: {e}")
-        return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
+        return jsonify({'code': 0, 'msg': 'server_error', 'data': None}), 500
 
 
 @auth_blp.route('/turnstile-clearance', methods=['POST'])
@@ -134,7 +134,7 @@ def issue_turnstile_clearance():
         })
     except Exception as e:
         logger.error(f"issue_turnstile_clearance error: {e}")
-        return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
+        return jsonify({'code': 0, 'msg': 'server_error', 'data': None}), 500
 
 
 # =============================================================================
@@ -294,7 +294,7 @@ def login(data):
             
     except Exception as e:
         logger.error(f"Login error: {e}")
-        return jsonify({'code': 500, 'msg': str(e), 'data': None}), 500
+        return jsonify({'code': 500, 'msg': 'server_error', 'data': None}), 500
 
 
 @auth_blp.route('/mfa/verify-login', methods=['POST'])
@@ -361,7 +361,7 @@ def verify_login_mfa():
         })
     except Exception as e:
         logger.error(f"verify_login_mfa error: {e}")
-        return jsonify({'code': 500, 'msg': str(e), 'data': None}), 500
+        return jsonify({'code': 500, 'msg': 'server_error', 'data': None}), 500
 
 
 # =============================================================================
@@ -1031,7 +1031,7 @@ def oauth_google():
 
     except Exception as e:
         logger.error(f"oauth_google error: {e}")
-        return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
+        return jsonify({'code': 0, 'msg': 'server_error', 'data': None}), 500
 
 
 @auth_blp.route('/oauth/google/callback', methods=['GET'])
@@ -1130,7 +1130,7 @@ def oauth_github():
 
     except Exception as e:
         logger.error(f"oauth_github error: {e}")
-        return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
+        return jsonify({'code': 0, 'msg': 'server_error', 'data': None}), 500
 
 
 @auth_blp.route('/oauth/github/callback', methods=['GET'])
@@ -1273,7 +1273,7 @@ def get_user_info():
         })
     except Exception as e:
         logger.error(f"get_user_info error: {e}")
-        return jsonify({'code': 500, 'msg': str(e), 'data': None}), 500
+        return jsonify({'code': 500, 'msg': 'server_error', 'data': None}), 500
 
 
 def _get_permissions(role: str) -> list:
