@@ -806,6 +806,17 @@ class FastAnalysisService(FastAnalysisScoringMixin):
             )
 
             data = primary_data  # keep original variable usage for prompt/LLM input
+
+            # Social sentiment (Adanos metrics + X discussion digest) supplements
+            # the report when configured; it must never block or fail the analysis.
+            try:
+                from app.data_providers.social_sentiment import fetch_social_context
+
+                social_context = fetch_social_context(market, symbol)
+                if social_context.get("enabled"):
+                    data["social_sentiment"] = social_context
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("social context skipped: %s", exc)
             
             # Validate we have essential data - with fallback to indicators
             current_price = None

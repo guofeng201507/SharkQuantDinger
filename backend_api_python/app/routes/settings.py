@@ -82,7 +82,7 @@ ADVANCED_KEYS = {
     'FINNHUB_API_KEY', 'FINNHUB_FREE_ONLY',
     'TRADING_ECONOMICS_CLIENT', 'TRADING_ECONOMICS_KEY',
     'COINGLASS_API_KEY', 'CRYPTOQUANT_API_KEY', 'TIINGO_API_KEY',
-    'TWELVE_DATA_API_KEY', 'ADANOS_API_KEY',
+    'TWELVE_DATA_API_KEY', 'ADANOS_API_KEY', 'TWITTERAPI_IO_KEY',
     # Agent gateway (operator-level)
     'AGENT_JOBS_MAX_WORKERS',
     'ENABLE_PENDING_ORDER_WORKER', 'DISABLE_RESTORE_RUNNING_STRATEGIES',
@@ -114,7 +114,7 @@ ADVANCED_KEYS = {
     'USDT_PAY_CONFIRM_SECONDS', 'USDT_PAY_EXPIRE_MINUTES',
     'USDT_AMOUNT_SUFFIX_DECIMALS', 'USDT_WORKER_POLL_INTERVAL',
     # Adanos sentiment
-    'ADANOS_SENTIMENT_SOURCE', 'ADANOS_API_BASE_URL',
+    'ADANOS_SENTIMENT_SOURCE', 'ADANOS_API_BASE_URL', 'TWITTERAPI_IO_BASE_URL',
     # Provider internals / rarely changed endpoints
     'TRADING_ECONOMICS_BASE_URL', 'TRADING_ECONOMICS_TIMEOUT',
     'FRED_BASE_URL', 'FRED_TIMEOUT', 'BLS_BASE_URL', 'BLS_TIMEOUT', 'BEA_BASE_URL', 'BEA_TIMEOUT',
@@ -1115,6 +1115,22 @@ CONFIG_SCHEMA = {
                 'type': 'text',
                 'default': 'https://api.adanos.org',
                 'description': 'Adanos API endpoint. Change only if you have a self-hosted or mirrored instance.'
+            },
+            {
+                'key': 'TWITTERAPI_IO_KEY',
+                'label': 'twitterapi.io API Key',
+                'type': 'password',
+                'required': False,
+                'link': 'https://twitterapi.io',
+                'link_text': 'settings.link.getApiKey',
+                'description': 'twitterapi.io key. When set, AI analysis adds a digest of recent X (Twitter) posts for the instrument. Leave empty to disable.'
+            },
+            {
+                'key': 'TWITTERAPI_IO_BASE_URL',
+                'label': 'twitterapi.io API Base URL',
+                'type': 'text',
+                'default': 'https://api.twitterapi.io',
+                'description': 'twitterapi.io API endpoint. Change only if you have a mirrored instance.'
             },
         ]
     },

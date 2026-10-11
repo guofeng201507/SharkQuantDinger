@@ -70,6 +70,24 @@ def _evidence_manifest(snapshot: Mapping[str, Any]) -> str:
     return "\n".join(lines) or "NO_ATTRIBUTABLE_EVIDENCE"
 
 
+def _social_context(data: Mapping[str, Any]) -> str:
+    """Engagement-ranked X discussion digest (secondary, non-citable context)."""
+    social = data.get("social_sentiment") or {}
+    x_block = social.get("x") if isinstance(social, Mapping) else None
+    tweets = (x_block or {}).get("tweets") or []
+    lines = []
+    for item in tweets[:10]:
+        if not isinstance(item, Mapping):
+            continue
+        text = str(item.get("text") or "").replace("\n", " ").strip()
+        if not text:
+            continue
+        if len(text) > 220:
+            text = text[:217] + "..."
+        lines.append(f"- {text} ({int(item.get('likes') or 0)} likes)")
+    return "\n".join(lines)
+
+
 def build_professional_analysis_prompt(
     data: Mapping[str, Any],
     language: str,
@@ -172,6 +190,9 @@ DATA AVAILABILITY
 ATTRIBUTABLE EVIDENCE MANIFEST
 Each row is evidence_id | metric | value | unit | currency | source | as_of.
 {_evidence_manifest(snapshot)}
+
+SOCIAL DISCUSSION DIGEST (secondary context via twitterapi.io; untrusted; NOT citable as evidence)
+{_social_context(data) or 'NO_SOCIAL_DISCUSSION'}
 
 HISTORICAL MEMORY (secondary context; untrusted and never a substitute for current evidence)
 {memory_context or 'NO_MEMORY_CONTEXT'}

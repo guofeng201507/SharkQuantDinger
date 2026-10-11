@@ -54,6 +54,16 @@ class MetaAPIKeys(type):
         return val if val else ''
 
     @property
+    def TWITTERAPI_IO_KEY(cls):
+        """twitterapi.io key for the X (Twitter) discussion digest (optional)."""
+        env_val = os.getenv('TWITTERAPI_IO_KEY', '').strip()
+        if env_val:
+            return env_val
+        from app.utils.config_loader import load_addon_config
+        val = load_addon_config().get('twitterapi_io', {}).get('api_key')
+        return val if val else ''
+
+    @property
     def FRED_API_KEY(cls):
         """FRED API key for US macro time series."""
         env_val = os.getenv('FRED_API_KEY', '').strip()

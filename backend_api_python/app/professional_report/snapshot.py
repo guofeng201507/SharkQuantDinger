@@ -178,6 +178,7 @@ class _ObservationCollector:
             "macro": 604_800,
             "news": 1_209_600,
             "crypto": 172_800,
+            "social": 172_800,
             "quality": 172_800,
         }.get(category, 86_400)
         clean_value = _jsonable(value)
@@ -428,6 +429,26 @@ def build_evidence_snapshot(payload: Mapping[str, Any]) -> dict[str, Any]:
             source_url=item.get("url") or item.get("link"),
             as_of=item.get("datetime") or item.get("published_at") or item.get("time"),
         )
+
+    social = payload.get("social_sentiment") or {}
+    adanos = social.get("adanos") if isinstance(social, Mapping) else None
+    if isinstance(adanos, Mapping):
+        social_metrics = {
+            "buzz_score": ("social.buzz_score", None),
+            "sentiment_score": ("social.sentiment_score", "ratio"),
+            "bullish_pct": ("social.bullish_pct", "percent"),
+            "bearish_pct": ("social.bearish_pct", "percent"),
+            "mentions": ("social.mentions", "count"),
+            "unique_tweets": ("social.unique_tweets", "count"),
+        }
+        for key, (metric, unit) in social_metrics.items():
+            collector.add(
+                metric,
+                adanos.get(key),
+                category="social",
+                source="adanos",
+                unit=unit,
+            )
 
     meta = payload.get("_meta") or {}
     required_by_market = {
