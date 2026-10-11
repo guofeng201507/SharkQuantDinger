@@ -51,6 +51,40 @@ discovery + OSV.dev CVE lookup) plus an OWASP A06 misconfiguration pass
 5. **Key rotation**: replace `CREDENTIAL_ENCRYPTION_KEY` on a schedule and
    re-encrypt stored credentials afterwards (runbook in CREDENTIAL_STORAGE).
 
+## Follow-up pass (same day) — open-item status
+
+1. **Non-root containers — done.** `sharkfe-bff` runs as `node` (uid 1000,
+   `USER node` in `bff.Dockerfile`); `sharkfe-web` uses
+   `nginxinc/nginx-unprivileged` (uid 101, listens on 8080; the deploy compose
+   maps `127.0.0.1:8888:8080`). The backend app already ran as uid 10001 via
+   the entrypoint's `gosu` drop — the earlier "runs as root" reading came from
+   `Config.User` being unset, not from the app process. Verified live through
+   `/proc/1/status`.
+2. **Host firewall — verified; `ufw` intentionally left off.** A probe from the
+   public internet reaches only 22/80/443; every business port
+   (5000/5432/6379/29092/8888/8890/8787/8080) times out, so the Alibaba
+   security group already drops them at the edge, and the host binds them to
+   127.0.0.1 anyway. `ufw` does not govern Docker-published ports and adds a
+   lockout risk, so the security group stays the boundary.
+3. **Error verbosity — pre-auth surface fixed.** The seven auth entry points
+   (security-config, turnstile clearance, login, MFA verify, Google/GitHub
+   OAuth authorize, user info) now return the stable `server_error` key and log
+   the detail server-side; the frontend maps it to a localized message. The
+   wider authenticated-route sweep stays low-priority future work.
+4. **CSP — promoted to enforced.** After the report-only soak, a
+   `securitypolicyviolation`-listener sweep across 16 authenticated routes plus
+   the four anonymous pages found zero violations; the full policy is now
+   served as an enforced `Content-Security-Policy` (with `frame-ancestors
+   'self'` merged in), and the post-enforcement sweep again showed zero
+   violations and zero console errors. Rollback = revert
+   `security-headers.conf` and redeploy the web image.
+5. **Key rotation — tooling and runbook added.** `scripts/rotate_credential_key.py`
+   re-encrypts broker credentials and MFA secrets from the old key to the new
+   one (dry-run by default, convergence + verification passes, `/app/.env`
+   fallback candidates covering legacy values). The CREDENTIAL_STORAGE runbook
+   now states the real constraint — replacing the key alone strands previously
+   written rows — and documents the maintenance-window procedure.
+
 ---
 
 ## 中文摘要
@@ -70,3 +104,11 @@ openapi 未对外）；CORS 为显式白名单；凭据 Fernet 加密存储。
 **待办（建议，未自动执行）**：① 容器以 root 运行——改非 root 需处理卷权限，建议独立变更；
 ② 宿主机 `ufw` 未启用——请核对阿里云安全组仅放行 22/80/443；③ 部分接口回传原始异常字符串
 （单租户风险低）；④ CSP 观察期后转正式强制；⑤ 定期轮换 `CREDENTIAL_ENCRYPTION_KEY` 并重加密。
+
+**同日后续（待办收口）**：① 已改——bff 以 `node`、web 以 uid 101（unprivileged 镜像，容器内
+8080）运行，backend 应用进程本就经 gosu 降权到 UID 10001（原文「以 root 运行」以 `Config.User`
+为准，不准确）；② 安全组已核验——外网实测仅 22/80/443 可达、业务端口全部超时（边缘拦截），
+**ufw 决定不启用**（对 Docker 发布端口不生效且易锁死 SSH）；③ 登录前 7 处接口的异常回传已收敛为
+稳定 key `server_error`（详情只进日志，前端中英文案本地化），其余已登录路由留作低优先维护项；
+④ CSP 巡检 20 页（匿名 4 + 登录后 16）0 违规后**已转强制**，强制后复扫仍 0 违规、0 控制台错误；
+⑤ 新增 `scripts/rotate_credential_key.py`（含单测）并修正/扩写轮换手册（换钥会让旧行立刻不可读）。
