@@ -85,6 +85,36 @@ credentials, API keys, OAuth secrets, and broker or exchange settings. Mode
 `755` exposes secrets to other local users and still does not let UID `10001`
 write a root-owned file.
 
+## Broker Connection Fails (Alpaca / IBKR)
+
+A failed Alpaca connect reports the venue's own reason in the panel banner
+("Alpaca rejected this Key/Secret (unauthorized) …") instead of a bare HTTP
+status. Common causes:
+
+1. **Key prefix vs account mode.** Paper keys start with `PK` and must be used
+   with **Paper** selected; live keys start with `AK` and need **Live**. A
+   mismatch is rejected as `unauthorized`.
+2. **Secret shown only once.** Alpaca displays the secret a single time when the
+   key pair is created; if it was not stored, create a new pair.
+3. **Rotated or revoked key.** Regenerate in the Alpaca dashboard.
+4. **Network egress.** The server must reach `paper-api.alpaca.markets` /
+   `api.alpaca.markets` over HTTPS. Check from the host:
+
+```bash
+docker exec quantdinger-backend python -c "import socket; print(socket.create_connection(('paper-api.alpaca.markets',443),5).getpeername())"
+```
+
+The base URL shown in the panel is the **host** (`https://paper-api.alpaca.markets`),
+not the `/v2` endpoint path from Alpaca's REST docs: `alpaca-py` appends the API
+version itself (`url = base_url + "/" + version + path`), so the effective
+request is `https://paper-api.alpaca.markets/v2/account`. Passing a `.../v2` URL
+would produce `/v2/v2/...`; custom base URLs are rejected and a trailing `/v2`
+is stripped.
+
+Saved credentials are Fernet-encrypted; see
+[broker credential storage](../security/CREDENTIAL_STORAGE.md) for the storage
+model and the `.env` master-key runbook.
+
 ## Read-Only and Special Docker Deployments
 
 Automatic ownership repair cannot make a deliberately read-only mount writable.

@@ -12,7 +12,7 @@ QuantDinger 会处理模型密钥、交易凭证和账户数据。生产部署�
 - 在反向代理启用 HTTPS，限制管理端点，及时更新依赖和基础镜像。
 - 定期轮换模型密钥、OAuth 密钥、Agent Token 和交易凭证。
 
-部署基线见[生产加固](../deployment/PRODUCTION_HARDENING_CN.md)，运行监控见[可观测性](../deployment/OBSERVABILITY_CN.md)。
+部署基线见[生产加固](../deployment/PRODUCTION_HARDENING_CN.md)，交易凭据的加密与保护见[券商凭据存储](CREDENTIAL_STORAGE_CN.md)，运行监控见[可观测性](../deployment/OBSERVABILITY_CN.md)。
 
 ## Agent 与自动化
 

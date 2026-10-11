@@ -77,6 +77,33 @@ sudo chmod 600 .env
 OAuth Secret 以及券商或交易所设置。`755` 会让其他本地用户读取敏感信息，
 而且仍不能让 UID `10001` 写入 root 所有的文件。
 
+## 券商连接失败（Alpaca / IBKR）
+
+Alpaca 连接失败时，面板横幅会显示交易所返回的具体原因（如
+「Alpaca rejected this Key/Secret (unauthorized) …」），不再是裸的 HTTP 状态码。
+常见原因：
+
+1. **Key 前缀与账户模式不匹配。** paper Key 以 `PK` 开头，必须选 **Paper**；
+   实盘 Key 以 `AK` 开头，必须选 **Live**。不匹配会被判为 `unauthorized`。
+2. **Secret 只显示一次。** Alpaca 创建 Key 对时只展示一次 Secret；若当时没保存，
+   需要重新生成一对。
+3. **Key 被轮换/吊销。** 到 Alpaca 后台重新生成。
+4. **服务器出网。** 服务器必须能通过 HTTPS 访问 `paper-api.alpaca.markets` /
+   `api.alpaca.markets`。可在宿主机上验证：
+
+```bash
+docker exec quantdinger-backend python -c "import socket; print(socket.create_connection(('paper-api.alpaca.markets',443),5).getpeername())"
+```
+
+面板上显示的基础 URL 是**主机名**（`https://paper-api.alpaca.markets`），不是
+Alpaca 文档里的 `/v2` 端点路径：`alpaca-py` 会自行拼接 API 版本
+（`url = base_url + "/" + version + path`），实际请求就是
+`https://paper-api.alpaca.markets/v2/account`。若把 `.../v2` 传给 SDK 会拼成
+`/v2/v2/...`；系统不允许自定义基础 URL，且会自动去掉多余的尾部 `/v2`。
+
+已保存的凭据是 Fernet 密文存储；存储模型与 `.env` 主密钥运维见
+[券商凭据存储](../security/CREDENTIAL_STORAGE_CN.md)。
+
 ## 只读挂载与特殊 Docker 部署
 
 自动修复无法把有意设置的只读挂载变成可写。以下情况中，系统设置页面按设计

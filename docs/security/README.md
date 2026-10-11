@@ -12,7 +12,7 @@ QuantDinger handles model secrets, trading credentials, and account data. A prod
 - Enable HTTPS at the reverse proxy, restrict administration endpoints, and update dependencies and base images.
 - Rotate model keys, OAuth secrets, Agent Tokens, and trading credentials regularly.
 
-See [production hardening](../deployment/PRODUCTION_HARDENING.md) for the deployment baseline and [observability](../deployment/OBSERVABILITY.md) for operational monitoring.
+See [production hardening](../deployment/PRODUCTION_HARDENING.md) for the deployment baseline, [broker credential storage](CREDENTIAL_STORAGE.md) for how saved trading credentials are encrypted and protected, and [observability](../deployment/OBSERVABILITY.md) for operational monitoring.
 
 ## Agents and automation
 
