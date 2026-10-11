@@ -634,6 +634,11 @@ def send_verification_code():
         # Validate email
         if not email or not email_service.is_valid_email(email):
             return jsonify({'code': 0, 'msg': 'Invalid email address', 'data': None}), 400
+
+        # Fail fast with an actionable reason when the instance has no mail
+        # transport: register / code-login / reset all depend on email codes.
+        if not email_service.is_configured():
+            return jsonify({'code': 0, 'msg': 'email_service_not_configured', 'data': None}), 503
         
         # For change_password type with logged-in user, skip Turnstile verification
         # because user already authenticated
