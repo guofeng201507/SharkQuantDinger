@@ -34,7 +34,8 @@ def list_documentation():
 @docs_blp.route('/<slug>', methods=['GET'])
 @login_required
 def get_documentation(slug: str):
-    """Return the document for the caller's UI language (any edition as fallback)."""
+    """Return the document for the caller's UI language (same language, then
+    English, then any edition as fallback)."""
     try:
         doc = get_doc(slug, detect_request_language(request))
         if not doc:

@@ -1,8 +1,9 @@
 """Per-locale product documentation (in-app user guide and friends).
 
 Rows are keyed by ``(slug, locale)`` so a document can exist in several
-languages; readers pick by the caller's UI language (``X-App-Lang``) and fall
-back to any edition rather than failing.
+languages; readers pick by the caller's UI language (``X-App-Lang``). When that
+edition is missing, the lookup walks same language → English → any edition
+rather than failing.
 """
 from __future__ import annotations
 
@@ -15,6 +16,8 @@ logger = get_logger(__name__)
 
 # Generous ceiling: the user guide is ~70 KB; this blocks accidental blobs.
 MAX_CONTENT_BYTES = 1024 * 1024
+
+_DOC_COLUMNS = "SELECT slug, locale, title, content_md, updated_by, updated_at FROM qd_docs"
 
 
 class DocError(Exception):
@@ -33,33 +36,34 @@ def _normalize_locale(locale: Optional[str]) -> str:
 
 
 def get_doc(slug: str, locale: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """Return the document for ``locale``, else any available edition."""
+    """Return the document for ``locale``, falling back by proximity."""
     s = str(slug or "").strip()
     if not s:
         return None
     want = _normalize_locale(locale)
+    base = want.split("-", 1)[0]
     with get_db_connection() as db:
         cur = db.cursor()
         try:
-            cur.execute(
-                """
-                SELECT slug, locale, title, content_md, updated_by, updated_at
-                FROM qd_docs
-                WHERE slug = %s AND locale = %s
-                """,
-                (s, want),
-            )
+            cur.execute(f"{_DOC_COLUMNS} WHERE slug = %s AND locale = %s", (s, want))
             row = cur.fetchone()
             if not row:
-                # Any edition beats a 404: an untranslated doc still renders.
+                # Same language family before English: a zh-TW reader gets much
+                # more from zh-CN than from an English edition.
                 cur.execute(
-                    """
-                    SELECT slug, locale, title, content_md, updated_by, updated_at
-                    FROM qd_docs
-                    WHERE slug = %s
-                    ORDER BY (locale = 'en-US') DESC, updated_at DESC
-                    LIMIT 1
-                    """,
+                    f"{_DOC_COLUMNS} WHERE slug = %s AND locale LIKE %s"
+                    " ORDER BY updated_at DESC LIMIT 1",
+                    (s, f"{base}-%"),
+                )
+                row = cur.fetchone()
+            if not row:
+                cur.execute(f"{_DOC_COLUMNS} WHERE slug = %s AND locale = 'en-US'", (s,))
+                row = cur.fetchone()
+            if not row:
+                # Any edition beats a 404; the client decides whether a
+                # different language is usable or prefers its bundled copy.
+                cur.execute(
+                    f"{_DOC_COLUMNS} WHERE slug = %s ORDER BY updated_at DESC LIMIT 1",
                     (s,),
                 )
                 row = cur.fetchone()
