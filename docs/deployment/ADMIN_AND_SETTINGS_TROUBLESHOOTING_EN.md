@@ -85,6 +85,37 @@ credentials, API keys, OAuth secrets, and broker or exchange settings. Mode
 `755` exposes secrets to other local users and still does not let UID `10001`
 write a root-owned file.
 
+### Host User Locked Out of `.env` (Linux, running Compose as a normal user)
+
+The same ownership repair cuts the other way on a Linux host when Compose runs
+as a normal user: `.env` is bind-mounted, so on every backend (or worker, or
+migration) start the container re-owns the **host** file as `10001:10001`, mode
+`600`. Your login user can then no longer read it — `docker compose …` fails
+with a permission error on `.env`, and direct edits are refused. Running
+containers are unaffected: they run as UID `10001` and need that ownership to
+keep reading hot-reloaded settings (LLM keys, etc.).
+
+This is by design, not a bug: the application must read and rewrite the file as
+UID `10001`, so the host owner has to yield. Docker Desktop on macOS/Windows
+(virtualized file layer) and hosts that run Compose as root (e.g. this
+project's production server) do not hit this.
+
+Working with the file while keeping `10001` ownership:
+
+- **Edit `.env`** with sudo (`sudo vi .env`), then restore owner and mode (or
+  simply restart the backend later — the entrypoint re-asserts ownership on
+  every start):
+
+  ```bash
+  sudo chown 10001:10001 .env && sudo chmod 600 .env
+  ```
+
+  Do not `chown` the file to your login user while the stack runs: the
+  application (UID `10001`) loses read access at the same moment, and settings
+  saves plus hot-reload reads start failing.
+- **Compose commands**: run them as root (`sudo docker compose …`). Plain
+  `docker start|stop|logs|exec` commands do not read `.env` and need no sudo.
+
 ## Broker Connection Fails (Alpaca / IBKR)
 
 A failed Alpaca connect reports the venue's own reason in the panel banner

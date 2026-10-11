@@ -77,6 +77,33 @@ sudo chmod 600 .env
 OAuth Secret 以及券商或交易所设置。`755` 会让其他本地用户读取敏感信息，
 而且仍不能让 UID `10001` 写入 root 所有的文件。
 
+### 宿主机普通用户被挡在 `.env` 外（Linux 上以普通用户运行 Compose）
+
+同一套所有权修正会在 Linux 宿主机上**反向**生效：`.env` 通过 bind-mount 挂入
+容器，backend（以及任何 worker、migration）每次启动时都会在容器内把**宿主机上的
+这个文件**改成 `10001:10001`、权限 `600`。此后你的登录用户无法读取它——
+`docker compose …` 会因读不到 `.env` 报权限错误（permission denied），直接编辑
+也会被拒。已经在运行的容器不受影响：它们以 UID `10001` 运行，且运行中依赖该属主
+读取热更新的配置（如 LLM 密钥）。
+
+这是设计行为而非故障：应用必须以 UID `10001` 读写该文件，宿主机属主只能让位。
+macOS / Windows 的 Docker Desktop 有虚拟化文件层、以 root 运行 Compose 的服务器
+（如本项目生产环境）都不会遇到。
+
+在保持 `10001` 属主的前提下：
+
+- **编辑 `.env`**：用 sudo 编辑（如 `sudo vi .env`），完成后恢复属主与权限
+  （也可以先不管——下次 backend 启动时入口脚本会自动校正）：
+
+  ```bash
+  sudo chown 10001:10001 .env && sudo chmod 600 .env
+  ```
+
+  ⚠️ 不要在栈运行时把文件 `chown` 给你的登录用户——应用（UID `10001`）会在
+  同一刻失去读权限，设置保存与密钥热加载随之失败。
+- **Compose 命令**：以 root 执行 `sudo docker compose …`；日常容器操作可以用
+  不经 Compose 的 `docker start|stop|logs|exec`，这些命令不读 `.env`，无需 sudo。
+
 ## 券商连接失败（Alpaca / IBKR）
 
 Alpaca 连接失败时，面板横幅会显示交易所返回的具体原因（如
