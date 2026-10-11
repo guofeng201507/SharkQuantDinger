@@ -28,6 +28,18 @@ SYMBOL_SEARCH_CACHE_TTL_SEC = 21600
 _market_cache = CacheManager()
 _crypto_markets_cache: dict[str, dict] = {}
 CRYPTO_EXCHANGE_FALLBACK_ORDER = ("binance", "bitget", "bybit", "okx", "gate", "htx")
+_CRYPTO_QUOTE_SUFFIXES = ("USDT", "USDC", "FDUSD", "TUSD", "BUSD", "BTC", "ETH", "USD")
+
+
+def _crypto_keyword_variants(keyword: str) -> list:
+    """Accept exchange-style concatenated pairs: BTCUSDT also matches BTC/USDT."""
+    kw = str(keyword or "").strip().upper()
+    if not kw or "/" in kw:
+        return [kw]
+    for quote in _CRYPTO_QUOTE_SUFFIXES:
+        if kw.endswith(quote) and len(kw) > len(quote):
+            return [kw, f"{kw[:-len(quote)]}/{quote}"]
+    return [kw]
 
 
 def dedupe_symbol_results(items: Iterable[dict], limit: int) -> list:
@@ -89,7 +101,19 @@ def search_market_symbols(
         if exchange_id not in SUPPORTED_CRYPTO_EXCHANGE_IDS:
             return []
         market_type = normalize_market_type(market_type, market=market)
-        out = _search_cached_crypto_symbols(keyword, limit, exchange_id, market_type)
+        out = []
+        seen = set()
+        for variant in _crypto_keyword_variants(keyword):
+            for row in _search_cached_crypto_symbols(variant, limit, exchange_id, market_type):
+                key = (row.get("symbol"), row.get("instrument_id"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(row)
+                if len(out) >= limit:
+                    break
+            if len(out) >= limit:
+                break
         return dedupe_symbol_results(out, limit)
 
     out = dedupe_symbol_results(
