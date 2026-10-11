@@ -348,7 +348,14 @@ def get_strategy_backtest():
         row = get_strategy_backtest_repository().get_run(user_id=int(g.user_id), run_id=run_id)
         if not row:
             return jsonify({"code": 0, "msg": "strategyV2.runNotFound", "data": None}), 404
-        return jsonify({"code": 1, "msg": "success", "data": row})
+        # Mirror POST /run: engine fields (incl. equityCurve) at the top level so a
+        # history reload renders exactly like a fresh run. The nested `result` and
+        # the raw columns are kept for existing consumers.
+        data = {**row, "runId": row.get("id")}
+        result = row.get("result")
+        if isinstance(result, dict):
+            data = {**result, **data}
+        return jsonify({"code": 1, "msg": "success", "data": data})
     except ValueError as exc:
         return jsonify({"code": 0, "msg": str(exc), "data": None}), 400
     except Exception as exc:
