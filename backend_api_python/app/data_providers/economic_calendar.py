@@ -5,7 +5,7 @@ import hashlib
 import math
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -53,6 +53,43 @@ _AKSHARE_COUNTRY_MAP = {
     "\u6cd5\u56fd": "FR",
     "\u610f\u5927\u5229": "IT",
 }
+
+# ForexFactory's free weekly JSON keys rows by currency code.
+_FF_CURRENCY_COUNTRY = {
+    "USD": "US",
+    "EUR": "EU",
+    "GBP": "UK",
+    "JPY": "JP",
+    "CNY": "CN",
+    "CNH": "CN",
+    "AUD": "AU",
+    "CAD": "CA",
+    "NZD": "NZ",
+    "CHF": "CH",
+    "HKD": "HK",
+    "SGD": "SG",
+    "KRW": "KR",
+    "INR": "IN",
+    "BRL": "BR",
+    "MXN": "MX",
+    "ZAR": "ZA",
+    "TRY": "TR",
+    "SEK": "SE",
+    "NOK": "NO",
+    "DKK": "DK",
+    "PLN": "PL",
+    "HUF": "HU",
+    "CZK": "CZ",
+    "THB": "TH",
+    "MYR": "MY",
+    "IDR": "ID",
+    "PHP": "PH",
+    "VND": "VN",
+    "TWD": "TW",
+}
+
+# Free, key-less English calendar mirror of ForexFactory (this week only).
+_FF_CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
 _AKSHARE_BEARISH_IF_HIGHER_HINTS = (
     "\u5229\u7387",
@@ -175,14 +212,13 @@ _EVENT_TYPE_RULES: Tuple[Tuple[Tuple[str, ...], str, Tuple[str, ...]], ...] = (
 )
 
 
-def get_economic_calendar_payload() -> Dict[str, Any]:
+def get_economic_calendar_payload(lang: str = "cn") -> Dict[str, Any]:
     """Return macro calendar events plus status metadata for UI diagnostics.
 
-    Free deployments should not touch Finnhub's paid Economic Calendar endpoint
-    by default. We use AkShare's WallstreetCN adapter as the no-key free source,
-    optionally try Trading Economics when credentials are configured, and only
-    attempt Finnhub when FINNHUB_FREE_ONLY=false.
-    """
+    ``lang='en'`` prefers the free English ForexFactory feed; other languages
+    keep the AkShare/WallstreetCN (Chinese) fallback. Free deployments should
+    not touch Finnhub's paid Economic Calendar endpoint by default."""
+    english = str(lang or "cn").strip().lower().startswith("en")
     finnhub_free_only_override = os.getenv("FINNHUB_FREE_ONLY")
     finnhub_api_key_override = os.getenv("FINNHUB_API_KEY")
     if TradingEconomicsConfig.CONFIGURED:
@@ -200,7 +236,7 @@ def get_economic_calendar_payload() -> Dict[str, Any]:
             logger.warning("Trading Economics economic calendar returned no events")
             fallback = _fallback_calendar_payload(
                 "empty", "Trading Economics returned no economic calendar events.",
-                fallback_from="tradingeconomics",
+                fallback_from="tradingeconomics", english=english,
             )
             if fallback:
                 return fallback
@@ -212,6 +248,7 @@ def get_economic_calendar_payload() -> Dict[str, Any]:
                 f"http_{status_code}" if status_code else "upstream_error",
                 public_message,
                 fallback_from="tradingeconomics",
+                english=english,
             )
             if fallback:
                 return fallback
@@ -221,14 +258,16 @@ def get_economic_calendar_payload() -> Dict[str, Any]:
                 "error",
                 str(exc),
                 fallback_from="tradingeconomics",
+                english=english,
             )
             if fallback:
                 return fallback
     else:
         fallback = _fallback_calendar_payload(
             "not_configured",
-            "Trading Economics credentials are not configured; using AkShare WallstreetCN calendar fallback.",
+            "Trading Economics credentials are not configured; using a free calendar fallback.",
             fallback_from="tradingeconomics",
+            english=english,
         )
         if fallback:
             return fallback
@@ -322,8 +361,15 @@ def _fallback_calendar_payload(
     reason_status: str,
     reason_message: str,
     fallback_from: str = "finnhub",
+    *,
+    english: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    """Use AkShare/WallstreetCN calendar when the primary source is unavailable."""
+    """Use a free calendar source when the primary provider is unavailable.
+
+    English requests fall back to the ForexFactory weekly mirror (English-only),
+    other languages to the AkShare/WallstreetCN adapter (Chinese)."""
+    if english:
+        return _english_calendar_fallback(reason_status, fallback_from=fallback_from)
     try:
         events = _fetch_akshare_calendar()
         if not events:
@@ -362,6 +408,123 @@ def _fallback_calendar_payload(
             exc,
         )
         return None
+
+
+def _english_calendar_fallback(
+    reason_status: str,
+    fallback_from: str = "finnhub",
+) -> Optional[Dict[str, Any]]:
+    """Free English-only fallback: the ForexFactory weekly JSON mirror (no key)."""
+    try:
+        events = _fetch_forexfactory_calendar()
+        if not events:
+            logger.warning("ForexFactory economic calendar returned no events")
+            return None
+        logger.info(
+            "Economic calendar loaded from ForexFactory: %d events (%s=%s)",
+            len(events),
+            fallback_from,
+            reason_status,
+        )
+        return {
+            "events": events,
+            "status": "ok",
+            "source": "forexfactory",
+            "fallback_from": fallback_from,
+            "fallback_reason": reason_status,
+            "config_key": "",
+            "message": "",
+        }
+    except Exception as exc:
+        logger.warning("ForexFactory calendar fallback failed after %s: %s", reason_status, exc)
+        return None
+
+
+def _fetch_forexfactory_calendar() -> List[Dict[str, Any]]:
+    """Fetch the current week's English calendar from the free ForexFactory JSON."""
+    resp = requests.get(
+        _FF_CALENDAR_URL,
+        timeout=12,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; SharkQuant calendar)"},
+    )
+    resp.raise_for_status()
+    rows = resp.json()
+    if not isinstance(rows, list):
+        return []
+
+    events: List[Dict[str, Any]] = []
+    seen_keys: set = set()
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        title = str(row.get("title") or "").strip()
+        if not title:
+            continue
+        impact_raw = str(row.get("impact") or "").strip().lower()
+        if impact_raw in ("holiday", "non-economic", "non_economic", "non economic"):
+            continue
+        importance = {"high": "high", "medium": "medium", "low": "low"}.get(impact_raw, "medium")
+        date_str, time_str = _parse_ff_datetime(row.get("date"))
+        currency = str(row.get("country") or "").strip().upper()
+        country = _FF_CURRENCY_COUNTRY.get(currency, currency or "INTL")
+        forecast = str(row.get("forecast") or "").strip() or None
+        previous = str(row.get("previous") or "").strip() or None
+
+        dedupe_key = f"{date_str}|{time_str}|{title.lower()}|{country}"
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+
+        impact_if_above, impact_if_below = _impact_rules(title)
+        has_figures = bool(forecast or previous)
+        expected_impact = (
+            impact_if_above
+            if has_figures or importance == "high" or _is_macro_event_name(title)
+            else "neutral"
+        )
+        events.append(_with_ai_insight({
+            "id": int(hashlib.md5(dedupe_key.encode(), usedforsecurity=False).hexdigest()[:8], 16),
+            "name": title,
+            "name_en": title,
+            "country": country,
+            "date": date_str,
+            "time": time_str,
+            "importance": importance,
+            "actual": None,
+            "forecast": forecast or previous or "-",
+            "previous": previous or "-",
+            "impact_if_above": impact_if_above,
+            "impact_if_below": impact_if_below,
+            "impact_desc": "",
+            "impact_desc_en": "",
+            "expected_impact": expected_impact,
+            "actual_impact": None,
+            "is_released": False,
+            "source": "forexfactory",
+        }))
+
+    events.sort(
+        key=lambda item: (
+            _importance_rank(item.get("importance")),
+            item["date"],
+            item["time"],
+        )
+    )
+    return events
+
+
+def _parse_ff_datetime(value: Any) -> Tuple[str, str]:
+    """Convert ForexFactory ISO timestamps (with offset) to UTC date/time."""
+    text = str(value or "").strip()
+    if not text:
+        return datetime.now().strftime("%Y-%m-%d"), "--:--"
+    try:
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed.strftime("%Y-%m-%d"), parsed.strftime("%H:%M")
+    except ValueError:
+        return _parse_date({"date": text}), _parse_time({"time": text})
 
 
 def _request_status_code(exc: requests.exceptions.RequestException) -> Optional[int]:

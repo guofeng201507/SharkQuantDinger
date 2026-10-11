@@ -118,8 +118,13 @@ def economic_calendar():
     """Get economic calendar events with impact indicators."""
     try:
         force = request.args.get("force", "").lower() in ("true", "1")
+        # English readers get the English ForexFactory feed; other languages keep
+        # the Chinese source. The language is part of the cache key.
+        lang = "en" if str(request.args.get("lang") or "").strip().lower().startswith("en") else "cn"
         payload = cached_or_compute(
-            "economic_calendar_v3", get_economic_calendar_payload, force=force
+            f"economic_calendar_v3_{lang}",
+            lambda: get_economic_calendar_payload(lang),
+            force=force,
         )
         if isinstance(payload, list):
             data = payload
