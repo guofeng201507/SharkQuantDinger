@@ -306,7 +306,8 @@ def connect():
             })
         return jsonify({
             "success": False,
-            "error": "Connection failed. Verify API keys and network access to api.alpaca.markets.",
+            "error": getattr(client, "last_error", "")
+            or "Connection failed. Verify API keys and network access to api.alpaca.markets.",
         }), 400
     except ImportError:
         return jsonify({

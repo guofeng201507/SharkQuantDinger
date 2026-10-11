@@ -220,6 +220,9 @@ class AlpacaClient:
         self._stock_data_client = None
         self._crypto_data_client = None
         self._account_id: Optional[str] = None
+        # Human-readable reason for the most recent failed connect(), surfaced
+        # by /alpaca/connect so the UI can show why instead of a generic 400.
+        self.last_error: str = ""
 
     @property
     def connected(self) -> bool:
@@ -235,10 +238,12 @@ class AlpacaClient:
 
     def connect(self) -> bool:
         """Initialize Alpaca client and verify credentials by fetching account."""
+        self.last_error = ""
         try:
             api_key = (self.config.api_key or "").strip()
             secret_key = (self.config.secret_key or "").strip()
             if not api_key or not secret_key:
+                self.last_error = "empty api_key or secret_key"
                 logger.error("Alpaca connect failed: empty api_key or secret_key")
                 return False
 
@@ -275,7 +280,9 @@ class AlpacaClient:
             )
             return True
         except Exception as e:
-            logger.error("Alpaca connect failed: %s", _format_alpaca_error(e, context="REST account"))
+            detail = _format_alpaca_error(e, context="REST account")
+            self.last_error = detail
+            logger.error("Alpaca connect failed: %s", detail)
             self._trading_client = None
             self._account_id = None
             return False
