@@ -100,7 +100,10 @@ def market_news():
         data = cached_or_compute(
             cache_key,
             lambda: fetch_financial_news(lang),
-            ttl=180,
+            # Aggregation is the most expensive fetch on the page (12 searches),
+            # so keep a 15-minute cache: refreshes are near-instant and the
+            # upstream quota (free tiers) lasts far longer.
+            ttl=900,
             force=force,
         )
         return jsonify({"code": 1, "msg": "success", "data": data})
