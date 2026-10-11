@@ -410,11 +410,56 @@ def _fallback_calendar_payload(
         return None
 
 
+def _try_finnhub_calendar_payload(
+    fallback_from: str,
+    reason_status: str,
+) -> Optional[Dict[str, Any]]:
+    """Use Finnhub's economic calendar when a non-free plan is enabled.
+
+    The free tier does not include /calendar/economic, so this only runs when
+    FINNHUB_FREE_ONLY is explicitly disabled and a key is configured — wiring
+    the paid plan in later needs config only, no code change."""
+    if _finnhub_free_only_enabled():
+        return None
+    key = str(os.getenv("FINNHUB_API_KEY") or APIKeys.FINNHUB_API_KEY or "").strip()
+    if not key:
+        return None
+    try:
+        events = _fetch_finnhub_calendar(key)
+    except requests.exceptions.RequestException as exc:
+        logger.warning("Finnhub economic calendar unavailable: %s", _public_request_error_message(exc))
+        return None
+    except Exception as exc:
+        logger.warning("Finnhub economic calendar failed: %s", exc)
+        return None
+    if not events:
+        return None
+    logger.info(
+        "Economic calendar loaded from Finnhub: %d events (%s=%s)",
+        len(events),
+        fallback_from,
+        reason_status,
+    )
+    return {
+        "events": events,
+        "status": "ok",
+        "source": "finnhub",
+        "fallback_from": fallback_from,
+        "fallback_reason": reason_status,
+        "config_key": "FINNHUB_API_KEY",
+        "message": "",
+    }
+
+
 def _english_calendar_fallback(
     reason_status: str,
     fallback_from: str = "finnhub",
 ) -> Optional[Dict[str, Any]]:
-    """Free English-only fallback: the ForexFactory weekly JSON mirror (no key)."""
+    """English fallback chain: paid Finnhub plan (when enabled) then the free
+    ForexFactory weekly JSON mirror (no key)."""
+    finnhub_payload = _try_finnhub_calendar_payload(fallback_from, reason_status)
+    if finnhub_payload:
+        return finnhub_payload
     try:
         events = _fetch_forexfactory_calendar()
         if not events:
