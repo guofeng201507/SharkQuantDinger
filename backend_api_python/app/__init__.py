@@ -139,6 +139,7 @@ def create_app(config_name='default', *, register_http_routes: bool = True):
     if register_http_routes:
         _configure_cors(app)
     setup_logger()
+    logger.info("[deploy-test] dummy startup marker active")
 
     if register_http_routes:
         from app.observability import init_http_observability
