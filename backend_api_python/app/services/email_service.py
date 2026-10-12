@@ -9,6 +9,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from typing import Tuple, Optional
+from app.services.settings.branding import brand_env
 from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
 
@@ -294,30 +295,49 @@ class EmailService:
         
         code = code_or_msg
         
+        # Branding is resolved per send so admin changes apply without a restart.
+        brand_name = brand_env("BRAND_APP_NAME", "app_name")
+        copyright_text = brand_env("BRAND_COPYRIGHT", "copyright")
+        logo_url = brand_env("BRAND_LOGO_LIGHT_URL")
+        site_url = (os.getenv("FRONTEND_URL") or "").split(",")[0].strip().rstrip("/")
+
         # Prepare email content based on type
         if code_type == 'register':
-            subject = 'QuantDinger - Verification Code for Registration'
+            subject = f'{brand_name} - Verification Code for Registration'
             action_text = 'complete your registration'
         elif code_type == 'login':
-            subject = 'QuantDinger - Quick Login Verification Code'
+            subject = f'{brand_name} - Quick Login Verification Code'
             action_text = 'log in to your account'
         elif code_type == 'reset_password':
-            subject = 'QuantDinger - Password Reset Verification Code'
+            subject = f'{brand_name} - Password Reset Verification Code'
             action_text = 'reset your password'
         elif code_type == 'change_password':
-            subject = 'QuantDinger - Verification Code for Password Change'
+            subject = f'{brand_name} - Verification Code for Password Change'
             action_text = 'change your password'
         elif code_type == 'change_email':
-            subject = 'QuantDinger - Verification Code for Email Change'
+            subject = f'{brand_name} - Verification Code for Email Change'
             action_text = 'change your email address'
         else:
-            subject = 'QuantDinger - Verification Code'
+            subject = f'{brand_name} - Verification Code'
             action_text = 'complete the verification'
+
+        logo_html = ''
+        if logo_url:
+            logo_img = (
+                f'<img src="{logo_url}" alt="{brand_name}" width="64" height="64" '
+                'style="display: block; margin: 0 auto 12px auto; border: 0; border-radius: 16px;" />'
+            )
+            logo_html = (
+                f'<a href="{site_url}" style="text-decoration: none;">{logo_img}</a>'
+                if site_url
+                else logo_img
+            )
         
         html_body = f"""
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
             <div style="text-align: center; margin-bottom: 30px;">
-                <h1 style="color: #1890ff; margin: 0;">QuantDinger</h1>
+                {logo_html}
+                <h1 style="color: #1890ff; margin: 0;">{brand_name}</h1>
                 <p style="color: #666; margin-top: 5px;">AI-Driven Quantitative Insights</p>
             </div>
             
@@ -341,7 +361,7 @@ class EmailService:
             </div>
             
             <div style="text-align: center; margin-top: 30px; color: #999; font-size: 12px;">
-                <p>&copy; QuantDinger. All rights reserved.</p>
+                <p>{copyright_text}</p>
             </div>
         </div>
         """

@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import requests
 
+from app.services.settings.branding import brand_env
 from app.utils.db import get_db_connection
 from app.utils.notification_display import with_display
 from app.utils.logger import get_logger
@@ -326,11 +327,12 @@ def _send_login_alerts(
         if not email_svc.is_configured():
             return
         subject = title
+        brand_name = brand_env("BRAND_APP_NAME", "app_name")
         body = f"""
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
             <h2 style="color: #d4380d;">登录安全提醒</h2>
             <p>您好，{nickname}：</p>
-            <p>We detected a sign-in to your QuantDinger account from a <strong>{reason_text}</strong>:</p>
+            <p>We detected a sign-in to your {brand_name} account from a <strong>{reason_text}</strong>:</p>
             <ul>
                 <li>登录方式：{method}</li>
                 <li>设备：{device_label}</li>
