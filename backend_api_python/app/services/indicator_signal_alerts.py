@@ -870,7 +870,7 @@ class IndicatorSignalAlertService:
         <div style="font-family:Inter,Arial,sans-serif;background:#0f1115;padding:24px;color:#e5e7eb;">
           <div style="max-width:620px;margin:0 auto;background:#181b20;border:1px solid #2b3139;border-radius:8px;overflow:hidden;">
             <div style="padding:20px 22px;background:linear-gradient(135deg, rgba(239,68,68,.24), rgba(34,197,94,.12));border-bottom:1px solid #2b3139;">
-              <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;">QuantDinger Indicator Signal</div>
+              <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;">SharkQuant Indicator Signal</div>
               <div style="font-size:20px;font-weight:700;margin-top:6px;color:#fff;">{_html_escape(indicator_name)}</div>
               <div style="margin-top:12px;display:inline-block;padding:7px 11px;border-radius:6px;border:1px solid {side_color};background:rgba(255,255,255,.04);color:{side_color};font-weight:800;">{_html_escape(label)}</div>
             </div>

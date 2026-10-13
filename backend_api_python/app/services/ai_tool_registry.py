@@ -1,4 +1,4 @@
-"""Metadata registry for QuantDinger agent tools.
+"""Metadata registry for SharkQuant agent tools.
 
 This registry describes system workflows that the AI may plan around. It is not
 an execution engine; routes that mutate state still enforce their own auth and
@@ -146,8 +146,8 @@ TOOLS: tuple[ToolDefinition, ...] = (
         category="strategy",
         label_zh="生成指标研发草稿",
         label_en="Generate indicator draft",
-        description_zh="根据用户确认的需求生成只用于图表展示的 QuantDinger 指标草稿。",
-        description_en="Generate a chart-only QuantDinger indicator draft after requirements are confirmed.",
+        description_zh="根据用户确认的需求生成只用于图表展示的 SharkQuant 指标草稿。",
+        description_en="Generate a chart-only SharkQuant indicator draft after requirements are confirmed.",
         route="/indicator-ide",
         requires=("indicator_requirements",),
         produces=("indicator_code", "visualization_plan"),
@@ -712,7 +712,7 @@ def build_tool_prompt(language: str = "zh-CN", intent: str = "") -> str:
             tools = targeted
     tools = sorted(tools, key=lambda tool: (-tool.priority, tool.id))[:8]
     lines = [
-        "[QuantDinger tool registry]",
+        "[SharkQuant tool registry]",
         "These are available system workflows. Treat write tools as user-confirmed handoffs, not autonomous execution.",
         "Live trading boundary: strategy deployments are created stopped. Quick live orders require explicit user confirmation, T scope, a live-capable token, and server-side enablement.",
     ]

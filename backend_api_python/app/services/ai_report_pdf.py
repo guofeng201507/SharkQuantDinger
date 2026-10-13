@@ -324,7 +324,7 @@ def _register_report_pdf_font(language: str = "", prefer_cjk: bool = False) -> s
             ("C:/Windows/Fonts/arial.ttf", False),
         ]
     )
-    font_name = f"QuantDingerSans_{re.sub(r'[^A-Za-z0-9]', '_', language_key)}"
+    font_name = f"SharkQuantSans_{re.sub(r'[^A-Za-z0-9]', '_', language_key)}"
     for path, is_cjk in candidates:
         if prefer_cjk and not is_cjk and path not in universal_candidates:
             continue
@@ -385,7 +385,7 @@ def _market_bias_labels(language: str = "") -> dict[str, str]:
 
 def _report_pdf_labels(language: str = "") -> dict[str, str]:
     labels = {
-        "title": "QuantDinger AI Research Report",
+        "title": "SharkQuant AI Research Report",
         "subtitle": "AI-assisted market analysis for research use only",
         "target": "Target",
         "generated": "Generated",
@@ -406,7 +406,7 @@ def _report_pdf_labels(language: str = "") -> dict[str, str]:
     }
     overrides = {
         "zh-CN": {
-            "title": "QuantDinger AI 研究报告",
+            "title": "SharkQuant AI 研究报告",
             "subtitle": "AI 辅助市场分析，仅供研究参考",
             "target": "分析标的",
             "generated": "生成时间",
@@ -426,7 +426,7 @@ def _report_pdf_labels(language: str = "") -> dict[str, str]:
             "disclaimer": "本报告由 AI 生成，仅供研究参考，不构成投资建议。",
         },
         "zh-TW": {
-            "title": "QuantDinger AI 研究報告",
+            "title": "SharkQuant AI 研究報告",
             "subtitle": "AI 輔助市場分析，僅供研究參考",
             "target": "分析標的",
             "generated": "生成時間",
@@ -446,7 +446,7 @@ def _report_pdf_labels(language: str = "") -> dict[str, str]:
             "disclaimer": "本報告由 AI 生成，僅供研究參考，不構成投資建議。",
         },
         "ja": {
-            "title": "QuantDinger AI リサーチレポート",
+            "title": "SharkQuant AI リサーチレポート",
             "subtitle": "AI による市場分析（調査目的のみ）",
             "target": "対象",
             "generated": "作成日時",
@@ -466,7 +466,7 @@ def _report_pdf_labels(language: str = "") -> dict[str, str]:
             "disclaimer": "本レポートは AI が調査目的で作成したもので、投資助言ではありません。",
         },
         "ko": {
-            "title": "QuantDinger AI 리서치 보고서",
+            "title": "SharkQuant AI 리서치 보고서",
             "subtitle": "연구 목적의 AI 기반 시장 분석",
             "target": "분석 대상",
             "generated": "생성 시각",
@@ -486,7 +486,7 @@ def _report_pdf_labels(language: str = "") -> dict[str, str]:
             "disclaimer": "이 보고서는 AI가 연구 목적으로 생성했으며 투자 조언이 아닙니다.",
         },
         "de": {
-            "title": "QuantDinger KI-Researchbericht",
+            "title": "SharkQuant KI-Researchbericht",
             "subtitle": "KI-gestützte Marktanalyse nur zu Forschungszwecken",
             "target": "Instrument",
             "generated": "Erstellt",
@@ -506,7 +506,7 @@ def _report_pdf_labels(language: str = "") -> dict[str, str]:
             "disclaimer": "Dieser Bericht wurde von KI zu Forschungszwecken erstellt und ist keine Anlageberatung.",
         },
         "fr": {
-            "title": "Rapport de recherche IA QuantDinger",
+            "title": "Rapport de recherche IA SharkQuant",
             "subtitle": "Analyse de marché assistée par IA, à des fins de recherche uniquement",
             "target": "Actif analysé",
             "generated": "Généré le",
@@ -526,7 +526,7 @@ def _report_pdf_labels(language: str = "") -> dict[str, str]:
             "disclaimer": "Ce rapport est généré par IA à des fins de recherche et ne constitue pas un conseil en investissement.",
         },
         "ru": {
-            "title": "Аналитический отчёт QuantDinger AI",
+            "title": "Аналитический отчёт SharkQuant AI",
             "subtitle": "Анализ рынка с помощью ИИ только для исследовательских целей",
             "target": "Инструмент",
             "generated": "Создан",
@@ -546,7 +546,7 @@ def _report_pdf_labels(language: str = "") -> dict[str, str]:
             "disclaimer": "Этот отчёт создан ИИ только для исследований и не является инвестиционной рекомендацией.",
         },
         "ar": {
-            "title": "تقرير أبحاث QuantDinger بالذكاء الاصطناعي",
+            "title": "تقرير أبحاث SharkQuant بالذكاء الاصطناعي",
             "subtitle": "تحليل للسوق بمساعدة الذكاء الاصطناعي لأغراض البحث فقط",
             "target": "الأصل محل التحليل",
             "generated": "تاريخ الإنشاء",
@@ -566,7 +566,7 @@ def _report_pdf_labels(language: str = "") -> dict[str, str]:
             "disclaimer": "أُنشئ هذا التقرير بالذكاء الاصطناعي لأغراض البحث فقط ولا يُعد نصيحة استثمارية.",
         },
         "th": {
-            "title": "รายงานวิจัย QuantDinger AI",
+            "title": "รายงานวิจัย SharkQuant AI",
             "subtitle": "การวิเคราะห์ตลาดด้วย AI เพื่อการวิจัยเท่านั้น",
             "target": "สินทรัพย์ที่วิเคราะห์",
             "generated": "สร้างเมื่อ",
@@ -586,7 +586,7 @@ def _report_pdf_labels(language: str = "") -> dict[str, str]:
             "disclaimer": "รายงานนี้สร้างโดย AI เพื่อการวิจัยเท่านั้น ไม่ใช่คำแนะนำการลงทุน",
         },
         "vi": {
-            "title": "Báo cáo nghiên cứu QuantDinger AI",
+            "title": "Báo cáo nghiên cứu SharkQuant AI",
             "subtitle": "Phân tích thị trường có hỗ trợ của AI, chỉ dành cho mục đích nghiên cứu",
             "target": "Tài sản phân tích",
             "generated": "Thời gian tạo",
@@ -693,8 +693,8 @@ def _build_professional_report_pdf(report: dict, target: dict | None, language: 
         rightMargin=15 * mm,
         topMargin=18 * mm,
         bottomMargin=17 * mm,
-        title="QuantDinger Professional Research Report",
-        author="QuantDinger",
+        title="SharkQuant Professional Research Report",
+        author="SharkQuant",
         subject="Evidence-backed market research",
     )
     content_width = page_width - doc.leftMargin - doc.rightMargin
@@ -1252,10 +1252,10 @@ def build_ai_report_pdf(report: dict, target: dict | None = None, language: str 
                 direction="RTL",
                 shaping=True,
             )
-            canvas_obj.drawString(doc.leftMargin, 9 * mm, f"QuantDinger Research · {document.page}")
+            canvas_obj.drawString(doc.leftMargin, 9 * mm, f"SharkQuant Research · {document.page}")
         else:
             canvas_obj.drawString(doc.leftMargin, 9 * mm, labels["disclaimer"])
-            canvas_obj.drawRightString(width - doc.rightMargin, 9 * mm, f"QuantDinger Research · {document.page}")
+            canvas_obj.drawRightString(width - doc.rightMargin, 9 * mm, f"SharkQuant Research · {document.page}")
         canvas_obj.restoreState()
 
     symbol = report.get("symbol") or target.get("symbol") or ""

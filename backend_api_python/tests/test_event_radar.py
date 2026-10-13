@@ -51,7 +51,7 @@ def _settings():
         "crypto_rss_enabled": True,
         "yahoo_finance_rss_enabled": True,
         "sec_edgar_enabled": True,
-        "sec_edgar_user_agent": "QuantDinger tests test@example.com",
+        "sec_edgar_user_agent": "SharkQuant tests test@example.com",
     }
 
 
@@ -277,7 +277,7 @@ def test_us_stock_collection_prioritizes_ticker_scoped_news(monkeypatch):
         days=2,
         max_events=8,
         yahoo_finance_rss_enabled=True,
-        sec_edgar_user_agent="QuantDinger tests test@example.com",
+        sec_edgar_user_agent="SharkQuant tests test@example.com",
     )
 
     assert events[0]["title"] == "Microsoft expands its AI infrastructure"

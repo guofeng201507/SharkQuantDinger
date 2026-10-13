@@ -93,7 +93,7 @@ def generate_indicator_code_candidate(
     use_patch_response = bool(existing.strip())
     if existing:
         user_prompt = (
-            "# Existing QuantDinger indicator code (source of truth):\n\n```python\n"
+            "# Existing SharkQuant indicator code (source of truth):\n\n```python\n"
             + existing.strip()
             + "\n```\n\n# Change request:\n\n"
             + prompt
@@ -160,7 +160,7 @@ def generate_indicator_code_candidate(
         except CodeEditError as exc:
             logger.warning("indicator model patch rejected, retrying full candidate: %s", exc)
             fallback_prompt = (
-                "# Existing QuantDinger indicator code (source of truth):\n\n```python\n"
+                "# Existing SharkQuant indicator code (source of truth):\n\n```python\n"
                 + existing.strip()
                 + "\n```\n\n# Change request:\n\n"
                 + prompt

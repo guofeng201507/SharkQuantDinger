@@ -443,8 +443,8 @@ class LLMService:
         
         # OpenRouter specific headers
         if "openrouter" in base_url:
-            headers["HTTP-Referer"] = "https://quantdinger.com"
-            headers["X-Title"] = "QuantDinger Analysis"
+            headers["HTTP-Referer"] = "https://shark.aiorz.cc"
+            headers["X-Title"] = "SharkQuant Analysis"
 
         data = {
             "model": model,
@@ -926,8 +926,8 @@ class LLMService:
         if (api_key or "").strip():
             headers["Authorization"] = f"Bearer {api_key.strip()}"
         if "openrouter" in base_url:
-            headers["HTTP-Referer"] = "https://quantdinger.com"
-            headers["X-Title"] = "QuantDinger Analysis"
+            headers["HTTP-Referer"] = "https://shark.aiorz.cc"
+            headers["X-Title"] = "SharkQuant Analysis"
 
         data = {
             "model": model,

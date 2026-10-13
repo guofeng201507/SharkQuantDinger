@@ -700,7 +700,7 @@ def _get_okx_public_json(path: str) -> dict:
     hostname = "openapi.okx.com"
     url = f"https://{hostname}{path}"
     try:
-        response = requests.get(url, timeout=30, headers={"User-Agent": "QuantDinger/1.0"})
+        response = requests.get(url, timeout=30, headers={"User-Agent": "SharkQuant/1.0"})
         response.raise_for_status()
         return response.json()
     except Exception as primary_error:
@@ -718,7 +718,7 @@ def _get_okx_public_json(path: str) -> dict:
                 response = pool.request(
                     "GET",
                     path,
-                    headers={"Host": hostname, "User-Agent": "QuantDinger/1.0"},
+                    headers={"Host": hostname, "User-Agent": "SharkQuant/1.0"},
                 )
                 if response.status != 200:
                     raise RuntimeError(f"HTTP {response.status}")
@@ -746,7 +746,7 @@ def _resolve_ipv4_with_doh(hostname: str) -> List[str]:
                 url,
                 params=params,
                 timeout=10,
-                headers={"Accept": "application/dns-json", "User-Agent": "QuantDinger/1.0"},
+                headers={"Accept": "application/dns-json", "User-Agent": "SharkQuant/1.0"},
             )
             response.raise_for_status()
             for answer in response.json().get("Answer") or []:
@@ -840,7 +840,7 @@ def fetch_moex_symbols() -> List[SymbolMasterRow]:
             "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json",
             params={"iss.meta": "off"},
             timeout=20,
-            headers={"User-Agent": "QuantDinger/1.0"},
+            headers={"User-Agent": "SharkQuant/1.0"},
         )
         resp.raise_for_status()
         data = resp.json().get("securities", {})

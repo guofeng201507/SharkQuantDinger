@@ -682,7 +682,7 @@ def run_strategy_workspace_turn():
             )
             discussion_contract = render_strategy_capability_contract(discussion_intent)
             discussion_system = (
-                "You are QuantDinger's Strategy API V2 code reviewer. Answer in the user's language. "
+                "You are SharkQuant's Strategy API V2 code reviewer. Answer in the user's language. "
                 "Explain the current strategy's universe, market type, subscriptions, signals, sizing, risk, and limitations. "
                 "Never claim code was changed and never return replacement source. Be concise and concrete. "
                 "Treat the active capability contract below as authoritative platform behavior and distinguish it from behavior actually implemented by the source."

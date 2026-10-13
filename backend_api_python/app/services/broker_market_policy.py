@@ -223,7 +223,7 @@ def validate_strategy_config(
     # Rule 5: long-only brokers
     if ex in LONG_ONLY_BROKERS and td and td != "long":
         raise ValueError(
-            f"{ex.upper()} live execution in QuantDinger is currently "
+            f"{ex.upper()} live execution in SharkQuant is currently "
             f"long-only (got trade_direction='{td}'). For short selling "
             f"please use a perpetual-swap crypto exchange "
             f"(Binance/OKX/Bybit/Bitget) for crypto. "

@@ -31,7 +31,7 @@ _ticker_lock = threading.Lock()
 def fetch_coindesk_events(*, days: int = 2, limit: int = 20, timeout: float = 8.0) -> list[dict[str, Any]]:
     response = requests.get(
         COINDESK_RSS_URL,
-        headers={"User-Agent": "QuantDinger Event Radar/1.0"},
+        headers={"User-Agent": "SharkQuant Event Radar/1.0"},
         timeout=timeout,
     )
     response.raise_for_status()
@@ -72,7 +72,7 @@ def fetch_yahoo_finance_events(
     response = requests.get(
         YAHOO_FINANCE_RSS_URL,
         params={"s": normalized_ticker, "region": "US", "lang": "en-US"},
-        headers={"User-Agent": "QuantDinger Event Radar/1.0"},
+        headers={"User-Agent": "SharkQuant Event Radar/1.0"},
         timeout=timeout,
     )
     response.raise_for_status()

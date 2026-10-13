@@ -1,4 +1,4 @@
-"""Canonical default chart indicator template for QuantDinger."""
+"""Canonical default chart indicator template for SharkQuant."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ def build_default_indicator_template(
     safe_name = (name or "EMA Chart Indicator Template").replace("\\", "\\\\").replace('"', '\\"')
     safe_desc = (description or "").replace("\\", "\\\\").replace('"', '\\"')
     return f'''# ============================================================
-# QuantDinger default chart indicator template
+# SharkQuant default chart indicator template
 # ------------------------------------------------------------
 # Indicators are chart-only. They do not open, close, size, or manage trades.
 # Convert an indicator to a script strategy before backtesting or live trading.

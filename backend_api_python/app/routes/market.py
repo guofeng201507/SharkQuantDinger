@@ -150,7 +150,7 @@ def get_menu_footer_config():
             'user_agreement': '',
             'privacy_policy': ''
         },
-            'copyright': '(c) 2025-2026 QuantDinger'
+            'copyright': '(c) 2025-2026 SharkQuant'
     }
     return jsonify({'code': 1, 'msg': 'success', 'data': data})
 

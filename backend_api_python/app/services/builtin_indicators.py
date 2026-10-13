@@ -35,7 +35,7 @@ _LEGACY_BUILTIN_SAMPLE_NAMES = (
 )
 
 
-# QuantDinger Indicator IDE contract (the sandbox injects df / pd / np / params):
+# SharkQuant Indicator IDE contract (the sandbox injects df / pd / np / params):
 #   * top of file declares my_indicator_name / my_indicator_description
 #   * df = df.copy()  -> work on a private copy
 #   * output['signals'] is chart-only and never drives orders by itself
@@ -43,7 +43,7 @@ _LEGACY_BUILTIN_SAMPLE_NAMES = (
 #   * # @param ... range=a:b:s  exposes a validated parameter control in the IDE
 _SUPERTREND_CODE = r'''# ============================================================
 # [Sample] SuperTrend Trend-Following -- classic ATR channel flip
-# --- QuantDinger chart indicator contract ---
+# --- SharkQuant chart indicator contract ---
 # ------------------------------------------------------------
 # Idea: build an adaptive band pair (HL2 +/- mult * ATR). The bands
 # can only tighten in the prevailing trend direction. Price crossing

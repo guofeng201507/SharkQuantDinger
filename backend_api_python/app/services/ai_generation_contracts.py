@@ -1,4 +1,4 @@
-"""Central AI generation contracts for QuantDinger code assets."""
+"""Central AI generation contracts for SharkQuant code assets."""
 
 STRATEGY_INSTRUMENT_IDENTITY_CONTRACT = """
 ## Exchange-routed equity product contract
@@ -16,7 +16,7 @@ STRATEGY_INSTRUMENT_IDENTITY_CONTRACT = """
 - Strategy code must use Strategy API V2 data and order APIs. Do not call exchange stock endpoints, broker APIs, or public data providers directly. Compile or backtest success does not prove live eligibility; deployment revalidates the current catalog product, venue capability, account, trading status, sizing rules, and currency.
 """
 
-STRATEGY_V2_BASE_SYSTEM_PROMPT = """You generate executable QuantDinger Strategy API V2 Python.
+STRATEGY_V2_BASE_SYSTEM_PROMPT = """You generate executable SharkQuant Strategy API V2 Python.
 Return Python source only. Do not use markdown fences or explanatory prose.
 
 # Strategy API V2 contract
@@ -204,7 +204,7 @@ SCRIPT_STRATEGY_REPAIR_REQUIREMENTS = """# Strategy API V2 repair requirements
 
 SCRIPT_STRATEGY_REPAIR_REQUIREMENTS += STRATEGY_INSTRUMENT_IDENTITY_CONTRACT
 
-INDICATOR_SYSTEM_CONTRACT = """# QuantDinger chart indicator contract
+INDICATOR_SYSTEM_CONTRACT = """# SharkQuant chart indicator contract
 
 - A chart indicator is visual analysis code only. It is not executable strategy code.
 - Indicators must not open, close, size, backtest, or live trade.
@@ -236,7 +236,7 @@ INDICATOR_GENERATION_CONTRACT = INDICATOR_SYSTEM_CONTRACT + """
 - Treat empty or missing existing source as a normal new-indicator state. Build the complete indicator from scratch immediately.
 - Never ask the user to repeat, reconfirm, or restate a sufficiently clear creation or change request. Choose conservative visual defaults for omitted cosmetic details.
 - The latest user request overrides prior assistant messages that deferred code generation or asked for another confirmation.
-- The Indicator IDE accepts QuantDinger Python only. If the user mentions Pine or Pine APIs, translate the requested behavior into this native Python contract instead of returning Pine or refusing the request.
+- The Indicator IDE accepts SharkQuant Python only. If the user mentions Pine or Pine APIs, translate the requested behavior into this native Python contract instead of returning Pine or refusing the request.
 - Preserve useful visual semantics when existing code is supplied.
 - Include concise plots, unambiguous marker labels, and useful tunable parameters.
 - Interpret user requests written in any language, but use English for identifiers, metadata, comments, `@param` descriptions, and default plot, signal, and layer labels.

@@ -30,7 +30,7 @@ _SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 _NASDAQ_OWNERSHIP_URL = "https://api.nasdaq.com/api/company/{symbol}/institutional-holdings"
 _SEC_USER_AGENT = os.getenv(
     "SEC_USER_AGENT",
-    "QuantDinger/5.0 open-source-research support@quantdinger.com",
+    "SharkQuant/5.0 open-source-research support@aiorz.cc",
 ).strip()
 _BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

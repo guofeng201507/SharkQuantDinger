@@ -782,7 +782,7 @@ class CryptoDataSource(BaseDataSource):
     @classmethod
     def _exchange_to_qd_timeframe(cls, exchange_tf: str, fallback: str) -> str:
         """Reverse the TIMEFRAME_MAP — e.g. '1d' → '1D'. Used so downstream helpers
-        that take the QuantDinger-style timeframe string get a consistent value when
+        that take the SharkQuant-style timeframe string get a consistent value when
         we fetch a different granularity than originally requested."""
         for qd, exchange_value in cls.TIMEFRAME_MAP.items():
             if exchange_value == exchange_tf:

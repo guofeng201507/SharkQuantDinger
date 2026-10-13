@@ -54,7 +54,7 @@ def read_public_document(url: str, *, timeout: float = 8.0, max_bytes: int = 5_0
             if parsed.query:
                 path += "?" + parsed.query
             response = pool.request("GET", path, headers={"Host": host,
-                "User-Agent": "QuantDinger Research support@quantdinger.com"},
+                "User-Agent": "SharkQuant Research support@aiorz.cc"},
                 redirect=False, retries=False, preload_content=False)
             if response.status in {301, 302, 303, 307, 308}:
                 url = urljoin(url, response.headers.get("Location", ""))

@@ -80,7 +80,7 @@ def test_sec_edgar_resolves_ticker_and_material_filings(monkeypatch):
 
     monkeypatch.setattr(module.requests, "get", fake_get)
     events = module.fetch_sec_filings(
-        "AAPL", days=2, user_agent="QuantDinger tests test@example.com",
+        "AAPL", days=2, user_agent="SharkQuant tests test@example.com",
     )
 
     assert [event["form"] for event in events] == ["8-K", "4"]

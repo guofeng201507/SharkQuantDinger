@@ -179,7 +179,7 @@ class NativeCryptoPublicClient:
             params=params or {},
             timeout=self.timeout,
             proxies=self._proxies,
-            headers={"User-Agent": "QuantDinger/5 public-market"},
+            headers={"User-Agent": "SharkQuant/5 public-market"},
         )
         response.raise_for_status()
         payload = response.json()

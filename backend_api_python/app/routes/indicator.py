@@ -62,7 +62,7 @@ logger = get_logger(__name__)
 indicator_blp = Blueprint("indicator", __name__)
 
 
-INDICATOR_IDE_SYSTEM_PROMPT = """You write production-ready QuantDinger chart indicators.
+INDICATOR_IDE_SYSTEM_PROMPT = """You write production-ready SharkQuant chart indicators.
 The runtime provides pandas as `pd`, numpy as `np`, an OHLCV DataFrame named `df`, and a `params` dict.
 Keep every generated file chart-only: no orders, positions, schedules, leverage, network, file I/O, reflection, or dynamic execution.
 Use pandas Series for rolling, fill, shift, ewm, iloc, and list conversion. Coerce numpy results with
@@ -927,7 +927,7 @@ def ai_generate():
         if not llm.get_api_key():
             return _indicator_discussion_fallback(existing, context, lang)
 
-        discussion_system = """You are QuantDinger's indicator-code reviewer.
+        discussion_system = """You are SharkQuant's indicator-code reviewer.
 Answer the user's question about the currently open indicator. Use the same language as the user.
 Explain concrete logic, parameters, plots, visual signals, edge cases, and limitations from the supplied source.
 Never claim that code was changed. Do not return a full replacement script and do not create a code candidate.
@@ -1046,7 +1046,7 @@ If the question actually requests a code modification, explain what should chang
 
         issues_text = _format_validation_issues(validation)
         repair_prompt = (
-            "You produced QuantDinger indicator code that failed automatic validation. "
+            "You produced SharkQuant indicator code that failed automatic validation. "
             "Fix the code while preserving the user's visual indicator idea and parameters. "
             "Return one full replacement script only.\n\n"
             f"# Original user request\n{prompt}\n\n"

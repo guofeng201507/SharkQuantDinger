@@ -85,7 +85,7 @@ class StripePaymentService:
         if cents <= 0:
             raise ValueError("invalid_plan_price")
 
-        name = str(plan.get("name") or plan_code or "QuantDinger membership").strip()
+        name = str(plan.get("name") or plan_code or "SharkQuant membership").strip()
         tax_code = str(os.getenv("STRIPE_PRODUCT_TAX_CODE") or StripePaymentService.DEFAULT_TAX_CODE).strip()
         if not re.fullmatch(r"txcd_\d{8}", tax_code):
             tax_code = StripePaymentService.DEFAULT_TAX_CODE

@@ -483,7 +483,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
 
             headers = {
                 "Accept": "application/json",
-                "User-Agent": "QuantDinger/4.0 SearXNGSearchProvider",
+                "User-Agent": "SharkQuant/4.0 SearXNGSearchProvider",
             }
             response = requests.get(
                 self._search_endpoint(),

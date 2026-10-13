@@ -495,7 +495,7 @@ class EventRadarService:
         contact_email = str(value("BRAND_CONTACT_EMAIL", "support@quantdinger.com") or "").strip()
         sec_user_agent = str(value("SEC_EDGAR_USER_AGENT", "") or "").strip()
         if not sec_user_agent and contact_email:
-            sec_user_agent = f"QuantDinger Event Radar {contact_email}"
+            sec_user_agent = f"SharkQuant Event Radar {contact_email}"
         return {
             "enabled": boolean("EVENT_RADAR_ENABLED", True),
             "jev_min_confidence": min(max(numeric("EVENT_RADAR_JEV_MIN_CONFIDENCE", 0.65), 0.0), 1.0),

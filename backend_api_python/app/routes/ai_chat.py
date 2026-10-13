@@ -553,7 +553,7 @@ def _classify_agent_intent(message: str, attachments: list[dict], context: dict,
     has_image = bool(attachments)
     fallback = _fallback_agent_intent(message, has_image, context, language)
     system_prompt = (
-        "You are the QuantDinger Agent Intent Router. Classify the user's message into a "
+        "You are the SharkQuant Agent Intent Router. Classify the user's message into a "
         "workflow plan for a global quantitative trading terminal. Return JSON only. "
         "Do not answer the user. Decide whether this is chat/research or an executable "
         "workflow such as indicator creation, strategy creation, backtest, or scheduled analysis. "
@@ -3130,10 +3130,10 @@ def _build_system_prompt(language: str, context: dict, intent: str, has_image: b
     context_line = ", ".join(context_bits) or "no explicit selected symbol"
     image_line = "The user attached chart/K-line screenshots; analyze visible chart structure, indicators, labels and risk." if has_image else "No image is attached."
     base = (
-        "You are QuantDinger Copilot, a trading system assistant for open-source quant users. "
+        "You are SharkQuant Copilot, a trading system assistant for open-source quant users. "
         f"Reply in {lang_name}. Current intent={intent}; context: {context_line}. {image_line}\n"
         "Be practical and careful. Do not promise profit or invent unavailable live data. "
-        "If the user asks to write strategy code, stay inside QuantDinger native workflows. "
+        "If the user asks to write strategy code, stay inside SharkQuant native workflows. "
         "Use Indicator IDE code for chart-only indicators and Strategy API V2 Python for executable or template-style strategies. "
         "Never output Pine Script, TradingView-only code, broker-specific scripts, or unrelated platform syntax unless the user explicitly asks for that platform. "
         "For strategy work, first clarify missing requirements, then propose design, then generate runnable code only when the user confirms or asks to generate. "
@@ -3162,7 +3162,7 @@ def _build_system_prompt(language: str, context: dict, intent: str, has_image: b
     base += "\n" + build_tool_prompt(language, intent) + "\n"
     if context.get("agent_task"):
         base += (
-            f"\n[QuantDinger agent task]\n{_json_dumps(context.get('agent_task'))}\n"
+            f"\n[SharkQuant agent task]\n{_json_dumps(context.get('agent_task'))}\n"
             "Treat this as a workflow state, not a casual chat. Keep the next action explicit.\n"
         )
     session_memory = context.get("session_summary") or context.get("session_working_memory")
@@ -3207,7 +3207,7 @@ def _build_system_prompt(language: str, context: dict, intent: str, has_image: b
             research_context = {key: value for key, value in research_context.items()
                                 if key not in {"research_agent", "tool_executions", "fundamentals", "news"}}
         base += (
-            "\n[QuantDinger Research Context]\n"
+            "\n[SharkQuant Research Context]\n"
             + _json_dumps(research_context)[:14000]
             + "\n"
             "Use the Research Context decision_order. If selected_context_conflict.has_conflict is true, explain the mismatch and prefer the user's message entity unless the user explicitly chose the selected UI symbol. "
@@ -4653,7 +4653,7 @@ def export_chat_report_pdf():
             or "report"
         ),
     ).strip("_")
-    filename = f"QuantDinger_{symbol or 'report'}_{_now_utc().strftime('%Y%m%d')}.pdf"
+    filename = f"SharkQuant_{symbol or 'report'}_{_now_utc().strftime('%Y%m%d')}.pdf"
     return Response(
         pdf_bytes,
         mimetype="application/pdf",

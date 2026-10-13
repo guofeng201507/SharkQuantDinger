@@ -117,7 +117,7 @@ def build_professional_analysis_prompt(
     observed_metrics = {item.get("metric") for item in snapshot.get("observations") or []}
     missing_required = [metric for metric in required_metrics if metric not in observed_metrics]
 
-    system_prompt = f"""You are the evidence-explanation component of QuantDinger's professional research pipeline.
+    system_prompt = f"""You are the evidence-explanation component of SharkQuant's professional research pipeline.
 You do not decide data quality, position caps or final execution eligibility; deterministic services do that after your response.
 
 LANGUAGE
