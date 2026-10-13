@@ -63,14 +63,18 @@ def build_brand_config(app_version: str) -> Dict[str, object]:
 
 
 def brand_env(name: str, default: str = "") -> str:
-    """Read a BRAND_* env var and fall back to the bundled default."""
-    value = os.getenv(name, "")
-    if value is None:
-        value = ""
-    value = value.strip()
-    if value:
-        return value
-    return BRAND_DEFAULTS.get(default, "")
+    """Read a BRAND_* env var and fall back to the bundled default.
+
+    A variable that is present but empty is an explicit "no value / hide"
+    (the .env template documents "leave empty to hide"); only a completely
+    unset variable falls back to the bundled QuantDinger default. The previous
+    implementation treated empty as unset, which made it impossible to hide
+    the default social icons / contact links on a rebranded deployment.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return BRAND_DEFAULTS.get(default, "")
+    return raw.strip()
 
 
 def _social_specs():
