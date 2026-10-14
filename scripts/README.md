@@ -19,6 +19,7 @@ The end-user installers live at the repository root:
 | `check_docs.py` | Validate documentation structure, local links, code fences, and referenced assets. | Keep |
 | `check_mojibake.py` | Detect common text-encoding corruption in tracked files. | Keep |
 | `check_version.py` | Verify version fallback files stay aligned; used by CI. | Keep |
+| `sync-upstream.sh` | One-way sync of upstream QuantDinger into this fork: preview or `--apply`, with a rollback tag. Never pushes or deploys. | Keep |
 
 Removed frontend-only scripts should be recreated or moved in the frontend
 repository if that workflow is still needed.
