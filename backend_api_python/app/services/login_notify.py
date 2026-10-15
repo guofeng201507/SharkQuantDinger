@@ -266,7 +266,7 @@ def _send_login_alerts(
         "both": "new device and region",
     }.get(reason_key, "unusual sign-in")
 
-    title = f"SharkQuant login alert · {reason_key}"
+    title = f"{brand_env('BRAND_APP_NAME', 'app_name')} login alert · {reason_key}"
     message = (
         f"Account {nickname} signed in from a new environment.\n"
         f"Method: {method}\n"
