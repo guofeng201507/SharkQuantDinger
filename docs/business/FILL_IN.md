@@ -46,7 +46,7 @@
 - E1 **品牌**：目前封面使用文字标识 "SharkQuant"；如有 Logo 源文件可替换封面与结尾页。
 - E2 **背书**：如有媒体/合作方/关键客户，可加一页 "Traction & Backing"（现无此页）。
 - E3 **截图账号名**：产品截图账号显示为 `sharkdemo`（演示账号）；如对外需匿名，可提供截图替换。
-- E4 **对外域名**：材料中引用了 `shark.aiorz.cc`（生产环境）；如另有营销官网请替换。
+- E4 **对外域名**：已定为 `sharkv2.com`（2026-10-15 起生产域名，`shark.aiorz.cc` 仍在并行服务，可作备用入口）。
 - E5 **合规提示**：支付通道开通时间对外表述请与公司进度一致（当前材料写"就绪待开"）。
 
 ---
@@ -59,4 +59,4 @@ Everything marked `【待填…】` / `[TBD…]` maps here. Fill in order, 10–
 - **B. Operating data**: registered/active/paying users; paid conversion & monthly churn; ARPU; gross margin net of LLM/data costs; LTV/CAC; MRR if any.
 - **C. Team**: founder/CEO name + one-line background; CTO; 2–3 core members; advisors (drop if none).
 - **D. Plans**: GTM channels & budget; 12-month milestone commitments (paying users / MRR / coverage); 1–2 roadmap highlights worth remembering.
-- **E. Optional & notes**: logo source files (cover currently uses a wordmark); backing/PR to add a "Traction" slide; screenshot account label is `sharkdemo`; production domain referenced is `shark.aiorz.cc`; payment-channel launch status wording ("ready, pending switch-on") must match reality.
+- **E. Optional & notes**: logo source files (cover currently uses a wordmark); backing/PR to add a "Traction" slide; screenshot account label is `sharkdemo`; production domain is `sharkv2.com` (`shark.aiorz.cc` remains as a parallel entry point); payment-channel launch status wording ("ready, pending switch-on") must match reality.

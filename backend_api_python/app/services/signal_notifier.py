@@ -746,7 +746,7 @@ class SignalNotifier:
 
         headers: Dict[str, str] = {
             "Content-Type": "application/json",
-            "User-Agent": "SharkQuant/1.0 (+https://shark.aiorz.cc)",
+            "User-Agent": "SharkQuant/1.0 (+https://sharkv2.com)",
         }
 
         # Per-strategy header overrides (only meaningful for generic
@@ -911,7 +911,7 @@ class SignalNotifier:
     def _post_discord_embed(self, *, url: str, embed: Dict[str, Any], fallback_text: str) -> Tuple[bool, str]:
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "SharkQuant/1.0 (+https://shark.aiorz.cc)",
+            "User-Agent": "SharkQuant/1.0 (+https://sharkv2.com)",
         }
 
         def _post(payload_json: Dict[str, Any]) -> requests.Response:

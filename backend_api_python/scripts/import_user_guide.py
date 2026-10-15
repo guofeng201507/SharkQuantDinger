@@ -6,7 +6,7 @@ with the frontend build, so this script is how the DB edition is created or
 refreshed — no frontend rebuild needed.
 
     python scripts/import_user_guide.py \
-        --base-url https://shark.aiorz.cc \
+        --base-url https://sharkv2.com \
         --admin-user "$ADMIN_USER" --admin-password "$ADMIN_PASSWORD" \
         --file ../frontend/USER_GUIDE.md --slug user-guide --locale zh-CN
 
@@ -43,7 +43,7 @@ def _http(method: str, url: str, body: dict | None = None, token: str | None = N
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base-url", required=True, help="e.g. https://shark.aiorz.cc")
+    ap.add_argument("--base-url", required=True, help="e.g. https://sharkv2.com")
     ap.add_argument("--admin-user", required=True)
     ap.add_argument("--admin-password", required=True)
     ap.add_argument("--file", required=True, help="markdown file to publish")
