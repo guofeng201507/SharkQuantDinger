@@ -451,289 +451,289 @@ CONFIG_SCHEMA = {
             },
             {
                 'key': 'LLM_PROVIDER',
-                'label': 'LLM Provider',
+                'label': 'settings.field.LLM_PROVIDER',
                 'type': 'select',
                 'default': 'openrouter',
                 'options': [
-                    {'value': 'openrouter', 'label': 'OpenRouter (Multi-model gateway)'},
-                    {'value': 'openai', 'label': 'OpenAI Direct'},
-                    {'value': 'google', 'label': 'Google Gemini'},
-                    {'value': 'deepseek', 'label': 'DeepSeek'},
-                    {'value': 'grok', 'label': 'xAI Grok'},
-                    {'value': 'atlascloud', 'label': 'AtlasCloud'},
-                    {'value': 'custom', 'label': 'Custom API (OpenAI-compatible)'},
-                    {'value': 'minimax', 'label': 'MiniMax'},
-                    {'value': 'litellm', 'label': 'LiteLLM (100+ providers)'},
+                    {'value': 'openrouter', 'label': 'settings.option.LLM_PROVIDER.openrouter'},
+                    {'value': 'openai', 'label': 'settings.option.LLM_PROVIDER.openai'},
+                    {'value': 'google', 'label': 'settings.option.LLM_PROVIDER.google'},
+                    {'value': 'deepseek', 'label': 'settings.option.LLM_PROVIDER.deepseek'},
+                    {'value': 'grok', 'label': 'settings.option.LLM_PROVIDER.grok'},
+                    {'value': 'atlascloud', 'label': 'settings.option.LLM_PROVIDER.atlascloud'},
+                    {'value': 'custom', 'label': 'settings.option.LLM_PROVIDER.custom'},
+                    {'value': 'minimax', 'label': 'settings.option.LLM_PROVIDER.minimax'},
+                    {'value': 'litellm', 'label': 'settings.option.LLM_PROVIDER.litellm'},
                 ],
-                'description': 'Select your preferred LLM provider'
+                'description': 'settings.desc.LLM_PROVIDER'
             },
             {
                 'key': 'AI_CODE_GEN_MODEL',
-                'label': 'Code Generation Model',
+                'label': 'settings.field.AI_CODE_GEN_MODEL',
                 'type': 'text',
                 'default': '',
                 'required': False,
-                'description': 'Optional model override for AI code generation. If empty, uses provider default model'
+                'description': 'settings.desc.AI_CODE_GEN_MODEL'
             },
             # OpenRouter
             {
                 'key': 'OPENROUTER_API_KEY',
-                'label': 'OpenRouter API Key',
+                'label': 'settings.field.OPENROUTER_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://openrouter.ai/keys',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'OpenRouter API key. Supports 100+ models via single API',
+                'description': 'settings.desc.OPENROUTER_API_KEY',
                 'group': 'openrouter'
             },
             {
                 'key': 'OPENROUTER_MODEL',
-                'label': 'OpenRouter Model',
+                'label': 'settings.field.OPENROUTER_MODEL',
                 'type': 'text',
                 'default': 'openai/gpt-5.4',
                 'link': 'https://openrouter.ai/models',
                 'link_text': 'settings.link.viewModels',
-                'description': 'OpenRouter model ID in provider/model format, e.g. openai/gpt-5.4, anthropic/claude-sonnet-4.5',
+                'description': 'settings.desc.OPENROUTER_MODEL',
                 'group': 'openrouter'
             },
             {
                 'key': 'OPENROUTER_FALLBACK_MODEL',
-                'label': 'OpenRouter Fallback Model',
+                'label': 'settings.field.OPENROUTER_FALLBACK_MODEL',
                 'type': 'text',
                 'default': '',
                 'required': False,
                 'link': 'https://openrouter.ai/models',
                 'link_text': 'settings.link.viewModels',
-                'description': 'Tried when the primary model fails. Leave empty to use the built-in default.',
+                'description': 'settings.desc.OPENROUTER_FALLBACK_MODEL',
                 'group': 'openrouter'
             },
             # OpenAI Direct
             {
                 'key': 'OPENAI_API_KEY',
-                'label': 'OpenAI API Key',
+                'label': 'settings.field.OPENAI_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://platform.openai.com/api-keys',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'OpenAI official API key',
+                'description': 'settings.desc.OPENAI_API_KEY',
                 'group': 'openai'
             },
             {
                 'key': 'OPENAI_MODEL',
-                'label': 'OpenAI Model',
+                'label': 'settings.field.OPENAI_MODEL',
                 'type': 'text',
                 'default': 'gpt-5.4',
                 'link': 'https://platform.openai.com/docs/models',
                 'link_text': 'settings.link.viewModels',
-                'description': 'OpenAI direct model name without provider prefix, e.g. gpt-5.4, gpt-4o-mini',
+                'description': 'settings.desc.OPENAI_MODEL',
                 'group': 'openai'
             },
             {
                 'key': 'OPENAI_BASE_URL',
-                'label': 'OpenAI Base URL',
+                'label': 'settings.field.OPENAI_BASE_URL',
                 'type': 'text',
                 'default': 'https://api.openai.com/v1',
-                'description': 'Custom API endpoint (for proxies or Azure)',
+                'description': 'settings.desc.OPENAI_BASE_URL',
                 'group': 'openai'
             },
             # Google Gemini
             {
                 'key': 'GOOGLE_API_KEY',
-                'label': 'Google API Key',
+                'label': 'settings.field.GOOGLE_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://aistudio.google.com/apikey',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'Google AI Studio API key for Gemini',
+                'description': 'settings.desc.GOOGLE_API_KEY',
                 'group': 'google'
             },
             {
                 'key': 'GOOGLE_MODEL',
-                'label': 'Gemini Model',
+                'label': 'settings.field.GOOGLE_MODEL',
                 'type': 'text',
                 'default': 'gemini-1.5-flash',
                 'link': 'https://ai.google.dev/gemini-api/docs/models',
                 'link_text': 'settings.link.viewModels',
-                'description': 'Model: gemini-1.5-flash, gemini-1.5-pro, gemini-2.0-flash-exp',
+                'description': 'settings.desc.GOOGLE_MODEL',
                 'group': 'google'
             },
             # DeepSeek
             {
                 'key': 'DEEPSEEK_API_KEY',
-                'label': 'DeepSeek API Key',
+                'label': 'settings.field.DEEPSEEK_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://platform.deepseek.com/api_keys',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'DeepSeek API key',
+                'description': 'settings.desc.DEEPSEEK_API_KEY',
                 'group': 'deepseek'
             },
             {
                 'key': 'DEEPSEEK_MODEL',
-                'label': 'DeepSeek Model',
+                'label': 'settings.field.DEEPSEEK_MODEL',
                 'type': 'text',
                 'default': 'deepseek-chat',
                 'link': 'https://api-docs.deepseek.com/quick_start/pricing',
                 'link_text': 'settings.link.viewModels',
-                'description': 'Model: deepseek-chat, deepseek-coder',
+                'description': 'settings.desc.DEEPSEEK_MODEL',
                 'group': 'deepseek'
             },
             {
                 'key': 'DEEPSEEK_BASE_URL',
-                'label': 'DeepSeek Base URL',
+                'label': 'settings.field.DEEPSEEK_BASE_URL',
                 'type': 'text',
                 'default': 'https://api.deepseek.com/v1',
-                'description': 'DeepSeek API endpoint',
+                'description': 'settings.desc.DEEPSEEK_BASE_URL',
                 'group': 'deepseek'
             },
             # xAI Grok
             {
                 'key': 'GROK_API_KEY',
-                'label': 'Grok API Key',
+                'label': 'settings.field.GROK_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://console.x.ai/',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'xAI Grok API key',
+                'description': 'settings.desc.GROK_API_KEY',
                 'group': 'grok'
             },
             {
                 'key': 'GROK_MODEL',
-                'label': 'Grok Model',
+                'label': 'settings.field.GROK_MODEL',
                 'type': 'text',
                 'default': 'grok-beta',
                 'link': 'https://docs.x.ai/docs/models',
                 'link_text': 'settings.link.viewModels',
-                'description': 'Model: grok-beta, grok-2',
+                'description': 'settings.desc.GROK_MODEL',
                 'group': 'grok'
             },
             {
                 'key': 'GROK_BASE_URL',
-                'label': 'Grok Base URL',
+                'label': 'settings.field.GROK_BASE_URL',
                 'type': 'text',
                 'default': 'https://api.x.ai/v1',
-                'description': 'xAI Grok API endpoint',
+                'description': 'settings.desc.GROK_BASE_URL',
                 'group': 'grok'
             },
             # AtlasCloud
             {
                 'key': 'ATLASCLOUD_API_KEY',
-                'label': 'AtlasCloud API Key',
+                'label': 'settings.field.ATLASCLOUD_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://www.atlascloud.ai/docs/api-keys',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'AtlasCloud API key. Uses the official OpenAI-compatible LLM endpoint.',
+                'description': 'settings.desc.ATLASCLOUD_API_KEY',
                 'group': 'atlascloud'
             },
             {
                 'key': 'ATLASCLOUD_MODEL',
-                'label': 'AtlasCloud Model',
+                'label': 'settings.field.ATLASCLOUD_MODEL',
                 'type': 'text',
                 'default': 'openai/gpt-5.4',
                 'link': 'https://www.atlascloud.ai/docs/models/llm',
                 'link_text': 'settings.link.viewModels',
-                'description': 'AtlasCloud model ID. Use the exact ID listed by AtlasCloud, e.g. openai/gpt-5.4 or deepseek-v3.',
+                'description': 'settings.desc.ATLASCLOUD_MODEL',
                 'group': 'atlascloud'
             },
             {
                 'key': 'ATLASCLOUD_BASE_URL',
-                'label': 'AtlasCloud Base URL',
+                'label': 'settings.field.ATLASCLOUD_BASE_URL',
                 'type': 'text',
                 'default': 'https://api.atlascloud.ai/v1',
-                'description': 'AtlasCloud OpenAI-compatible API endpoint. Must include /v1.',
+                'description': 'settings.desc.ATLASCLOUD_BASE_URL',
                 'group': 'atlascloud'
             },
             # Custom API (OpenAI-compatible)
             {
                 'key': 'CUSTOM_API_URL',
-                'label': 'Custom API URL',
+                'label': 'settings.field.CUSTOM_API_URL',
                 'type': 'text',
                 'default': '',
-                'description': 'Your custom API endpoint (OpenAI-compatible, e.g. https://api.example.com/v1)',
+                'description': 'settings.desc.CUSTOM_API_URL',
                 'group': 'custom'
             },
             {
                 'key': 'CUSTOM_API_KEY',
-                'label': 'Custom API Key',
+                'label': 'settings.field.CUSTOM_API_KEY',
                 'type': 'password',
                 'required': False,
-                'description': 'API key for your custom endpoint. Leave empty for local OpenAI-compatible servers without auth (e.g. Ollama on localhost)',
+                'description': 'settings.desc.CUSTOM_API_KEY',
                 'group': 'custom'
             },
             {
                 'key': 'CUSTOM_MODEL',
-                'label': 'Custom Model',
+                'label': 'settings.field.CUSTOM_MODEL',
                 'type': 'text',
                 'default': '',
-                'description': 'Model name to use (e.g. gpt-4o, claude-3-opus)',
+                'description': 'settings.desc.CUSTOM_MODEL',
                 'group': 'custom'
             },
             # MiniMax
             {
                 'key': 'MINIMAX_API_KEY',
-                'label': 'MiniMax API Key',
+                'label': 'settings.field.MINIMAX_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://platform.minimax.io',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'MiniMax API key',
+                'description': 'settings.desc.MINIMAX_API_KEY',
                 'group': 'minimax'
             },
             {
                 'key': 'MINIMAX_MODEL',
-                'label': 'MiniMax Model',
+                'label': 'settings.field.MINIMAX_MODEL',
                 'type': 'text',
                 'default': 'MiniMax-M2.7',
                 'link': 'https://platform.minimax.io/docs',
                 'link_text': 'settings.link.viewModels',
-                'description': 'Model: MiniMax-M2.7, MiniMax-M2.7-highspeed',
+                'description': 'settings.desc.MINIMAX_MODEL',
                 'group': 'minimax'
             },
             {
                 'key': 'MINIMAX_BASE_URL',
-                'label': 'MiniMax Base URL',
+                'label': 'settings.field.MINIMAX_BASE_URL',
                 'type': 'text',
                 'default': 'https://api.minimax.io/v1',
-                'description': 'MiniMax API endpoint',
+                'description': 'settings.desc.MINIMAX_BASE_URL',
                 'group': 'minimax'
             },
             # LiteLLM
             {
                 'key': 'LITELLM_API_KEY',
-                'label': 'LiteLLM API Key',
+                'label': 'settings.field.LITELLM_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://docs.litellm.ai/docs/providers',
                 'link_text': 'settings.link.viewProviders',
-                'description': 'Optional. LiteLLM reads provider-specific env vars (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.) automatically',
+                'description': 'settings.desc.LITELLM_API_KEY',
                 'group': 'litellm'
             },
             {
                 'key': 'LITELLM_MODEL',
-                'label': 'LiteLLM Model',
+                'label': 'settings.field.LITELLM_MODEL',
                 'type': 'text',
                 'default': 'openai/gpt-5.4',
                 'link': 'https://docs.litellm.ai/docs/providers',
                 'link_text': 'settings.link.viewProviders',
-                'description': 'LiteLLM model ID, usually provider/model format, e.g. openai/gpt-5.4, anthropic/claude-sonnet-4-20250514, gemini/gemini-2.5-flash',
+                'description': 'settings.desc.LITELLM_MODEL',
                 'group': 'litellm'
             },
             {
                 'key': 'LITELLM_BASE_URL',
-                'label': 'LiteLLM Base URL',
+                'label': 'settings.field.LITELLM_BASE_URL',
                 'type': 'text',
                 'default': '',
-                'description': 'Optional. Override provider base URL (e.g. Azure endpoint)',
+                'description': 'settings.desc.LITELLM_BASE_URL',
                 'group': 'litellm'
             },
             # Common settings
             {
                 'key': 'OPENROUTER_TEMPERATURE',
-                'label': 'Temperature',
+                'label': 'settings.field.OPENROUTER_TEMPERATURE',
                 'type': 'number',
                 'default': '0.7',
-                'description': 'Model creativity (0-1). Lower = more deterministic'
+                'description': 'settings.desc.OPENROUTER_TEMPERATURE'
             },
             {
                 'key': 'LLM_MAX_TOKENS',
@@ -744,26 +744,26 @@ CONFIG_SCHEMA = {
             },
             {
                 'key': 'AI_ANALYSIS_CONSENSUS_TIMEFRAMES',
-                'label': 'Consensus Timeframes',
+                'label': 'settings.field.AI_ANALYSIS_CONSENSUS_TIMEFRAMES',
                 'type': 'text',
                 'default': '1D,4H',
                 'required': False,
-                'description': 'Multi-timeframe consensus for fast AI analysis. Comma-separated, e.g. "1D,4H"'
+                'description': 'settings.desc.AI_ANALYSIS_CONSENSUS_TIMEFRAMES'
             },
             {
                 'key': 'LLM_PROXY_URL',
-                'label': 'LLM Proxy URL',
+                'label': 'settings.field.LLM_PROXY_URL',
                 'type': 'text',
                 'default': '',
                 'required': False,
-                'description': 'Optional dedicated proxy for LLM provider requests. Leave empty for direct LLM access; PROXY_URL is reserved for market data and exchange APIs.'
+                'description': 'settings.desc.LLM_PROXY_URL'
             },
             {
                 'key': 'LLM_USE_SYSTEM_PROXY',
-                'label': 'Use System Proxy for LLM',
+                'label': 'settings.field.LLM_USE_SYSTEM_PROXY',
                 'type': 'boolean',
                 'default': 'False',
-                'description': 'When enabled, LLM requests inherit HTTP_PROXY / HTTPS_PROXY / ALL_PROXY. Keep disabled unless the configured system proxy is reachable from this backend.'
+                'description': 'settings.desc.LLM_USE_SYSTEM_PROXY'
             },
         ]
     },
@@ -1527,200 +1527,200 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'ENABLE_REGISTRATION',
-                'label': 'Enable Registration',
+                'label': 'settings.field.ENABLE_REGISTRATION',
                 'type': 'boolean',
                 'default': 'True',
-                'description': 'Allow new users to register accounts'
+                'description': 'settings.desc.ENABLE_REGISTRATION'
             },
             {
                 'key': 'MFA_ENABLED',
-                'label': 'Enable Authenticator App MFA',
+                'label': 'settings.field.MFA_ENABLED',
                 'type': 'boolean',
                 'default': 'False',
-                'description': 'Allow users to opt in to authenticator-app two-step verification. This does not force all users to bind MFA.'
+                'description': 'settings.desc.MFA_ENABLED'
             },
             {
                 'key': 'MFA_RISK_LOGIN_ONLY',
-                'label': 'MFA Only for Risky Login',
+                'label': 'settings.field.MFA_RISK_LOGIN_ONLY',
                 'type': 'boolean',
                 'default': 'True',
-                'description': 'When enabled, users who bound MFA are challenged only on new-location or new-device logins. Turn off to challenge every password login for MFA-enabled users.'
+                'description': 'settings.desc.MFA_RISK_LOGIN_ONLY'
             },
             {
                 'key': 'FRONTEND_URL',
-                'label': 'Frontend URL',
+                'label': 'settings.field.FRONTEND_URL',
                 'type': 'text',
                 'default': 'http://localhost:8080',
-                'description': 'Frontend URL for OAuth redirects'
+                'description': 'settings.desc.FRONTEND_URL'
             },
             {
                 'key': 'OAUTH_ALLOWED_REDIRECTS',
-                'label': 'Extra OAuth Redirect Targets',
+                'label': 'settings.field.OAUTH_ALLOWED_REDIRECTS',
                 'type': 'text',
                 'required': False,
-                'description': 'Comma-separated scheme+host (+ optional port) of additional frontends allowed as OAuth post-login redirect targets, e.g. https://m.quantdinger.com,https://app.quantdinger.com. FRONTEND_URL is always allowed implicitly.'
+                'description': 'settings.desc.OAUTH_ALLOWED_REDIRECTS'
             },
             {
                 'key': 'OAUTH_STATE_TTL_MINUTES',
-                'label': 'OAuth State TTL (min)',
+                'label': 'settings.field.OAUTH_STATE_TTL_MINUTES',
                 'type': 'number',
                 'default': '20',
-                'description': 'OAuth CSRF state token lifetime in minutes. Clamped to [5,120].'
+                'description': 'settings.desc.OAUTH_STATE_TTL_MINUTES'
             },
             {
                 'key': 'TURNSTILE_SITE_KEY',
-                'label': 'Turnstile Site Key',
+                'label': 'settings.field.TURNSTILE_SITE_KEY',
                 'type': 'text',
                 'required': False,
                 'link': 'https://dash.cloudflare.com/?to=/:account/turnstile',
                 'link_text': 'settings.link.getTurnstileKey',
-                'description': 'Cloudflare Turnstile site key for CAPTCHA'
+                'description': 'settings.desc.TURNSTILE_SITE_KEY'
             },
             {
                 'key': 'TURNSTILE_SECRET_KEY',
-                'label': 'Turnstile Secret Key',
+                'label': 'settings.field.TURNSTILE_SECRET_KEY',
                 'type': 'password',
                 'required': False,
-                'description': 'Cloudflare Turnstile secret key'
+                'description': 'settings.desc.TURNSTILE_SECRET_KEY'
             },
             {
                 'key': 'GOOGLE_CLIENT_ID',
-                'label': 'Google OAuth Client ID',
+                'label': 'settings.field.GOOGLE_CLIENT_ID',
                 'type': 'text',
                 'required': False,
                 'link': 'https://console.cloud.google.com/apis/credentials',
                 'link_text': 'settings.link.getGoogleCredentials',
-                'description': 'Google OAuth Client ID for Google login'
+                'description': 'settings.desc.GOOGLE_CLIENT_ID'
             },
             {
                 'key': 'GOOGLE_CLIENT_SECRET',
-                'label': 'Google OAuth Secret',
+                'label': 'settings.field.GOOGLE_CLIENT_SECRET',
                 'type': 'password',
                 'required': False,
-                'description': 'Google OAuth Client Secret'
+                'description': 'settings.desc.GOOGLE_CLIENT_SECRET'
             },
             {
                 'key': 'GOOGLE_REDIRECT_URI',
-                'label': 'Google OAuth Redirect URI',
+                'label': 'settings.field.GOOGLE_REDIRECT_URI',
                 'type': 'text',
                 'required': False,
-                'description': 'Must match the redirect URI registered in your Google Cloud Console. Typically <api-host>/api/auth/oauth/google/callback.'
+                'description': 'settings.desc.GOOGLE_REDIRECT_URI'
             },
             {
                 'key': 'GITHUB_CLIENT_ID',
-                'label': 'GitHub OAuth Client ID',
+                'label': 'settings.field.GITHUB_CLIENT_ID',
                 'type': 'text',
                 'required': False,
                 'link': 'https://github.com/settings/developers',
                 'link_text': 'settings.link.getGithubCredentials',
-                'description': 'GitHub OAuth Client ID for GitHub login'
+                'description': 'settings.desc.GITHUB_CLIENT_ID'
             },
             {
                 'key': 'GITHUB_CLIENT_SECRET',
-                'label': 'GitHub OAuth Secret',
+                'label': 'settings.field.GITHUB_CLIENT_SECRET',
                 'type': 'password',
                 'required': False,
-                'description': 'GitHub OAuth Client Secret'
+                'description': 'settings.desc.GITHUB_CLIENT_SECRET'
             },
             {
                 'key': 'GITHUB_REDIRECT_URI',
-                'label': 'GitHub OAuth Redirect URI',
+                'label': 'settings.field.GITHUB_REDIRECT_URI',
                 'type': 'text',
                 'required': False,
-                'description': 'Must match the callback URL configured for your GitHub OAuth app. Typically <api-host>/api/auth/oauth/github/callback.'
+                'description': 'settings.desc.GITHUB_REDIRECT_URI'
             },
 
             # ===== Login / verification-code rate limiting (advanced) =====
             {
                 'key': 'SECURITY_IP_MAX_ATTEMPTS',
-                'label': 'IP Lockout: Max Attempts',
+                'label': 'settings.field.SECURITY_IP_MAX_ATTEMPTS',
                 'type': 'number',
                 'default': '10',
-                'description': 'How many failed login attempts from one IP before blocking. Advanced — tune only if you face credential-stuffing.'
+                'description': 'settings.desc.SECURITY_IP_MAX_ATTEMPTS'
             },
             {
                 'key': 'SECURITY_IP_WINDOW_MINUTES',
-                'label': 'IP Lockout: Window (min)',
+                'label': 'settings.field.SECURITY_IP_WINDOW_MINUTES',
                 'type': 'number',
                 'default': '5',
-                'description': 'Time window used to count failed attempts from an IP.'
+                'description': 'settings.desc.SECURITY_IP_WINDOW_MINUTES'
             },
             {
                 'key': 'SECURITY_IP_BLOCK_MINUTES',
-                'label': 'IP Lockout: Block (min)',
+                'label': 'settings.field.SECURITY_IP_BLOCK_MINUTES',
                 'type': 'number',
                 'default': '15',
-                'description': 'How long to block an IP after the threshold is hit.'
+                'description': 'settings.desc.SECURITY_IP_BLOCK_MINUTES'
             },
             {
                 'key': 'SECURITY_ACCOUNT_MAX_ATTEMPTS',
-                'label': 'Account Lockout: Max Attempts',
+                'label': 'settings.field.SECURITY_ACCOUNT_MAX_ATTEMPTS',
                 'type': 'number',
                 'default': '5',
-                'description': 'How many failed logins for a single account before locking it.'
+                'description': 'settings.desc.SECURITY_ACCOUNT_MAX_ATTEMPTS'
             },
             {
                 'key': 'SECURITY_ACCOUNT_WINDOW_MINUTES',
-                'label': 'Account Lockout: Window (min)',
+                'label': 'settings.field.SECURITY_ACCOUNT_WINDOW_MINUTES',
                 'type': 'number',
                 'default': '60',
-                'description': 'Time window for counting failed logins per account.'
+                'description': 'settings.desc.SECURITY_ACCOUNT_WINDOW_MINUTES'
             },
             {
                 'key': 'SECURITY_ACCOUNT_BLOCK_MINUTES',
-                'label': 'Account Lockout: Block (min)',
+                'label': 'settings.field.SECURITY_ACCOUNT_BLOCK_MINUTES',
                 'type': 'number',
                 'default': '30',
-                'description': 'How long an account stays locked after exceeding attempts.'
+                'description': 'settings.desc.SECURITY_ACCOUNT_BLOCK_MINUTES'
             },
             {
                 'key': 'VERIFICATION_CODE_EXPIRE_MINUTES',
-                'label': 'Verification Code Expiry (min)',
+                'label': 'settings.field.VERIFICATION_CODE_EXPIRE_MINUTES',
                 'type': 'number',
                 'default': '10',
-                'description': 'How long an email / SMS verification code is valid.'
+                'description': 'settings.desc.VERIFICATION_CODE_EXPIRE_MINUTES'
             },
             {
                 'key': 'VERIFICATION_CODE_RATE_LIMIT',
-                'label': 'Verification Code Rate Limit (sec)',
+                'label': 'settings.field.VERIFICATION_CODE_RATE_LIMIT',
                 'type': 'number',
                 'default': '60',
-                'description': 'Minimum seconds between two verification-code requests for the same target.'
+                'description': 'settings.desc.VERIFICATION_CODE_RATE_LIMIT'
             },
             {
                 'key': 'VERIFICATION_CODE_IP_HOURLY_LIMIT',
-                'label': 'Verification Code IP Hourly Limit',
+                'label': 'settings.field.VERIFICATION_CODE_IP_HOURLY_LIMIT',
                 'type': 'number',
                 'default': '10',
-                'description': 'Maximum verification codes one IP may request per hour.'
+                'description': 'settings.desc.VERIFICATION_CODE_IP_HOURLY_LIMIT'
             },
             {
                 'key': 'VERIFICATION_CODE_MAX_ATTEMPTS',
-                'label': 'Verification Code Max Attempts',
+                'label': 'settings.field.VERIFICATION_CODE_MAX_ATTEMPTS',
                 'type': 'number',
                 'default': '5',
-                'description': 'Wrong verification-code attempts allowed before locking.'
+                'description': 'settings.desc.VERIFICATION_CODE_MAX_ATTEMPTS'
             },
             {
                 'key': 'VERIFICATION_CODE_LOCK_MINUTES',
-                'label': 'Verification Code Lock (min)',
+                'label': 'settings.field.VERIFICATION_CODE_LOCK_MINUTES',
                 'type': 'number',
                 'default': '30',
-                'description': 'How long to block code submissions after the attempt limit is hit.'
+                'description': 'settings.desc.VERIFICATION_CODE_LOCK_MINUTES'
             },
             {
                 'key': 'MFA_CHALLENGE_EXPIRE_MINUTES',
-                'label': 'MFA Challenge Expiry (min)',
+                'label': 'settings.field.MFA_CHALLENGE_EXPIRE_MINUTES',
                 'type': 'number',
                 'default': '5',
-                'description': 'How long a post-password MFA challenge is valid.'
+                'description': 'settings.desc.MFA_CHALLENGE_EXPIRE_MINUTES'
             },
             {
                 'key': 'MFA_MAX_ATTEMPTS',
-                'label': 'MFA Max Attempts',
+                'label': 'settings.field.MFA_MAX_ATTEMPTS',
                 'type': 'number',
                 'default': '5',
-                'description': 'Wrong authenticator-code attempts allowed before the login challenge must be restarted.'
+                'description': 'settings.desc.MFA_MAX_ATTEMPTS'
             },
         ]
     },
