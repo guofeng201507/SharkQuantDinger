@@ -38,6 +38,10 @@ agent-tools/
 .codex/
 .codex-logs/
 .agents/
+# Qoder artifacts (AI-assistant knowledge base .qoder/repowiki, local plans,
+# editor state). The knowledge center regenerates it on demand; a copy was
+# committed once and then drifted from the code, so it stays out of git.
+.qoder/
 .local_tools/
 outputs/
 .pytest_cache/
