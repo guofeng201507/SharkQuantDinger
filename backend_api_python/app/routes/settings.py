@@ -314,31 +314,31 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'SECRET_KEY',
-                'label': 'Secret Key',
+                'label': 'settings.field.SECRET_KEY',
                 'type': 'password',
                 'default': '',
-                'description': 'Required JWT signing key (minimum 10 bytes for legacy compatibility; 32+ random bytes recommended)'
+                'description': 'settings.desc.SECRET_KEY'
             },
             {
                 'key': 'ADMIN_USER',
-                'label': 'Admin Username',
+                'label': 'settings.field.ADMIN_USER',
                 'type': 'text',
                 'default': 'quantdinger',
-                'description': 'Administrator login username'
+                'description': 'settings.desc.ADMIN_USER'
             },
             {
                 'key': 'ADMIN_PASSWORD',
-                'label': 'Admin Password',
+                'label': 'settings.field.ADMIN_PASSWORD',
                 'type': 'password',
                 'default': '123456',
-                'description': 'Administrator login password. MUST change in production'
+                'description': 'settings.desc.ADMIN_PASSWORD'
             },
             {
                 'key': 'ADMIN_EMAIL',
-                'label': 'Admin Email',
+                'label': 'settings.field.ADMIN_EMAIL',
                 'type': 'text',
                 'default': 'admin@example.com',
-                'description': 'Administrator email for password reset and notifications'
+                'description': 'settings.desc.ADMIN_EMAIL'
             },
         ]
     },
@@ -1306,52 +1306,52 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'SMTP_HOST',
-                'label': 'SMTP Server',
+                'label': 'settings.field.SMTP_HOST',
                 'type': 'text',
                 'required': False,
-                'description': 'SMTP server hostname (e.g. smtp.gmail.com)'
+                'description': 'settings.desc.SMTP_HOST'
             },
             {
                 'key': 'SMTP_PORT',
-                'label': 'SMTP Port',
+                'label': 'settings.field.SMTP_PORT',
                 'type': 'number',
                 'default': '587',
-                'description': 'SMTP port (587 for TLS, 465 for SSL)'
+                'description': 'settings.desc.SMTP_PORT'
             },
             {
                 'key': 'SMTP_USER',
-                'label': 'SMTP Username',
+                'label': 'settings.field.SMTP_USER',
                 'type': 'text',
                 'required': False,
-                'description': 'SMTP authentication username (usually email address)'
+                'description': 'settings.desc.SMTP_USER'
             },
             {
                 'key': 'SMTP_PASSWORD',
-                'label': 'SMTP Password',
+                'label': 'settings.field.SMTP_PASSWORD',
                 'type': 'password',
                 'required': False,
-                'description': 'SMTP authentication password or app-specific password'
+                'description': 'settings.desc.SMTP_PASSWORD'
             },
             {
                 'key': 'SMTP_FROM',
-                'label': 'Sender Address',
+                'label': 'settings.field.SMTP_FROM',
                 'type': 'text',
                 'required': False,
-                'description': 'Email sender address (From header)'
+                'description': 'settings.desc.SMTP_FROM'
             },
             {
                 'key': 'SMTP_USE_TLS',
-                'label': 'Use TLS',
+                'label': 'settings.field.SMTP_USE_TLS',
                 'type': 'boolean',
                 'default': 'True',
-                'description': 'Enable STARTTLS encryption (recommended for port 587)'
+                'description': 'settings.desc.SMTP_USE_TLS'
             },
             {
                 'key': 'SMTP_USE_SSL',
-                'label': 'Use SSL',
+                'label': 'settings.field.SMTP_USE_SSL',
                 'type': 'boolean',
                 'default': 'False',
-                'description': 'Enable SSL encryption (for port 465)'
+                'description': 'settings.desc.SMTP_USE_SSL'
             },
         ]
     },
@@ -1363,26 +1363,26 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'TWILIO_ACCOUNT_SID',
-                'label': 'Account SID',
+                'label': 'settings.field.TWILIO_ACCOUNT_SID',
                 'type': 'password',
                 'required': False,
                 'link': 'https://console.twilio.com/',
                 'link_text': 'settings.link.getApi',
-                'description': 'Twilio Account SID from console dashboard'
+                'description': 'settings.desc.TWILIO_ACCOUNT_SID'
             },
             {
                 'key': 'TWILIO_AUTH_TOKEN',
-                'label': 'Auth Token',
+                'label': 'settings.field.TWILIO_AUTH_TOKEN',
                 'type': 'password',
                 'required': False,
-                'description': 'Twilio Auth Token from console dashboard'
+                'description': 'settings.desc.TWILIO_AUTH_TOKEN'
             },
             {
                 'key': 'TWILIO_FROM_NUMBER',
-                'label': 'Sender Number',
+                'label': 'settings.field.TWILIO_FROM_NUMBER',
                 'type': 'text',
                 'required': False,
-                'description': 'Twilio phone number for sending SMS (e.g. +1234567890)'
+                'description': 'settings.desc.TWILIO_FROM_NUMBER'
             },
         ]
     },
