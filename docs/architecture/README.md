@@ -40,6 +40,7 @@ reliability requirements.
 | Preserve dependency direction | [Module boundaries](MODULE_BOUNDARIES.md) |
 | Change concurrent or durable work | [Concurrency model](CONCURRENCY_MODEL.md) |
 | Decide which process owns work | [Process roles](PROCESS_ROLES_AND_TASKS.md) |
+| Trace a strategy from source to live orders | [Strategy lifecycle](STRATEGY_LIFECYCLE.md) |
 | Deploy or scale the event runtime | [Distributed runtime scaling](../deployment/DISTRIBUTED_RUNTIME_SCALING.md) |
 | Review the proposed V6 100K-strategy architecture | [V6 hyperscale architecture plan](V6_HYPERSCALE_ARCHITECTURE_PLAN.md) |
 | Add routes, adapters, tasks, or services | [Extension guide](EXTENSION_GUIDE.md) |

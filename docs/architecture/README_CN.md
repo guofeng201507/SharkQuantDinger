@@ -34,6 +34,7 @@ Kafka 承载版本化运行时事件，两套 Redis 分别服务于缓存和持�
 | 保持依赖方向 | [模块边界（英文）](MODULE_BOUNDARIES.md) |
 | 修改并发或持久任务 | [并发模型（英文）](CONCURRENCY_MODEL.md) |
 | 判断任务属于哪个进程 | [进程职责（英文）](PROCESS_ROLES_AND_TASKS.md) |
+| 看清策略从脚本到下单的全链路 | [策略生命周期（中英对照 + mermaid 流程图）](STRATEGY_LIFECYCLE.md) |
 | 部署或扩容事件运行时 | [分布式运行时部署与扩容](../deployment/DISTRIBUTED_RUNTIME_SCALING_CN.md) |
 | 新增路由、适配器、任务或服务 | [扩展指南（英文）](EXTENSION_GUIDE.md) |
 | 修改 HTTP 契约 | [API 约定（英文）](API_CONVENTIONS.md) |
