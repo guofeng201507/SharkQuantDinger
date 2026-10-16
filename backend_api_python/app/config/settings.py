@@ -26,7 +26,7 @@ class MetaConfig(type):
 
     @property
     def APP_NAME(cls):
-        return 'QuantDinger Python API'
+        return 'SharkQuant Python API'
 
     @property
     def VERSION(cls):

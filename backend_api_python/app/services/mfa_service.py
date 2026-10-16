@@ -128,7 +128,7 @@ class MfaService:
 
         pyotp, qrcode = self._load_totp_libs()
         secret = pyotp.random_base32()
-        issuer = (os.getenv("BRAND_APP_NAME") or "QuantDinger").strip() or "QuantDinger"
+        issuer = (os.getenv("BRAND_APP_NAME") or "SharkQuant").strip() or "SharkQuant"
         account_label = (label or f"user-{user_id}").strip()
         uri = pyotp.TOTP(secret).provisioning_uri(name=account_label, issuer_name=issuer)
         qr_image = self._make_qr_data_url(qrcode, uri)

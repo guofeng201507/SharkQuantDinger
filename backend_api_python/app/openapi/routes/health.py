@@ -40,7 +40,7 @@ def _health_payload():
 def index():
     """Return API name, version, and running status."""
     return {
-        "name": "QuantDinger Python API",
+        "name": "SharkQuant Python API",
         "version": APP_VERSION,
         "status": "running",
         "timestamp": datetime.now(timezone.utc),
