@@ -127,7 +127,7 @@ components:
       properties:
         name:
           type: string
-          example: QuantDinger Python API
+          example: SharkQuant Python API
         version:
           type: string
           example: 5.0.1
