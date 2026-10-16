@@ -1,15 +1,15 @@
-# QuantDinger Documentation
+# SharkQuant Documentation
 
-QuantDinger is a self-hosted AI trading platform that connects market research,
+SharkQuant is a self-hosted AI trading platform that connects market research,
 Strategy API V2 development, backtesting, paper/live execution, operations, and
 AI-agent access. This documentation describes the current v5 release.
 
-[中文文档](../README_CN.md) · [Official website](https://quantdinger.com) ·
-[Web app](https://ai.quantdinger.com) · [GitHub](https://github.com/OpenByteInc/QuantDinger)
+[中文文档](../README_CN.md) · [Web app](https://sharkv2.com) ·
+[GitHub](https://github.com/OpenByteInc/QuantDinger)
 
 > Live trading can submit real orders. Start in paper mode, grant exchange keys
 > the minimum permissions required, and confirm the legal and operational
-> requirements for your jurisdiction. QuantDinger does not provide investment
+> requirements for your jurisdiction. SharkQuant does not provide investment
 > advice.
 
 ## Choose your goal
@@ -82,7 +82,7 @@ ownership or shared state.
 
 ### Getting started and product guides
 
-- [First run with QuantDinger](getting-started/FIRST_RUN.md)
+- [First run with SharkQuant](getting-started/FIRST_RUN.md)
 - [AI Research guide](product/AI_RESEARCH.md)
 - [From strategy idea to operation](product/STRATEGY_WORKFLOW.md)
 - [Backtest Center guide](product/BACKTEST_CENTER.md)

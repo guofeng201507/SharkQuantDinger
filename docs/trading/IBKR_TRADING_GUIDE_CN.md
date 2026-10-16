@@ -1,6 +1,6 @@
 # Interactive Brokers（IBKR）交易指南
 
-QuantDinger 可通过 Interactive Brokers TWS 或 IB Gateway 执行美股交易。上线前请先使用模拟账户完成连接、行情、下单和撤单验证。
+SharkQuant 可通过 Interactive Brokers TWS 或 IB Gateway 执行美股交易。上线前请先使用模拟账户完成连接、行情、下单和撤单验证。
 
 ## 前置条件
 
@@ -16,9 +16,9 @@ QuantDinger 可通过 Interactive Brokers TWS 或 IB Gateway 执行美股交易�
 | TWS | `7496` | `7497` |
 | IB Gateway | `4001` | `4002` |
 
-在 TWS 或 IB Gateway 中进入 **Configure → API → Settings**，启用 Socket Client，并确认实际端口。端口可被用户修改，QuantDinger 配置必须与客户端显示值一致。
+在 TWS 或 IB Gateway 中进入 **Configure → API → Settings**，启用 Socket Client，并确认实际端口。端口可被用户修改，SharkQuant 配置必须与客户端显示值一致。
 
-| QuantDinger 字段 | 说明 | 示例 |
+| SharkQuant 字段 | 说明 | 示例 |
 |---|---|---|
 | Broker | 选择 Interactive Brokers | — |
 | Host | TWS/Gateway 地址 | `127.0.0.1` |

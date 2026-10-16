@@ -1,6 +1,6 @@
 # From strategy idea to operation
 
-The QuantDinger strategy lifecycle covers hypothesis, code, validation, backtest, versioning, deployment, and monitoring. Each stage is a separate checkpoint so that “it runs” is never treated as “it is ready for live trading.”
+The SharkQuant strategy lifecycle covers hypothesis, code, validation, backtest, versioning, deployment, and monitoring. Each stage is a separate checkpoint so that “it runs” is never treated as “it is ready for live trading.”
 
 ## 1. Define the contract
 

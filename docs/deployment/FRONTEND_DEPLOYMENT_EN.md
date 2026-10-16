@@ -1,7 +1,7 @@
 # Self-built Frontend Deployment
 
 This guide documents the **self-built frontend** (Vue 3 SPA + Fastify BFF) that can replace the
-prebuilt GHCR frontend on a QuantDinger server. It assumes the host-level Nginx setup described in
+prebuilt GHCR frontend on a SharkQuant server. It assumes the host-level Nginx setup described in
 [Cloud Deployment](CLOUD_DEPLOYMENT_EN.md): the host Nginx proxies the public domain (including
 `/api` and `/ws`) to `127.0.0.1:8888`, and TLS is managed by Certbot.
 

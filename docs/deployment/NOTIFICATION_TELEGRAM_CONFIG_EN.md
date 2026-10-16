@@ -1,6 +1,6 @@
 # Telegram Notification Configuration Guide
 
-> QuantDinger supports real-time strategy signal notifications via Telegram Bot.
+> SharkQuant supports real-time strategy signal notifications via Telegram Bot.
 
 ---
 
@@ -20,7 +20,7 @@
 
 - Telegram client installed (mobile or desktop)
 - Active Telegram account
-- QuantDinger backend service deployed and running
+- SharkQuant backend service deployed and running
 
 ---
 
@@ -28,7 +28,7 @@
 
 1. Search for **@BotFather** in Telegram (official bot management tool)
 2. Send the `/newbot` command to create a new bot
-3. Enter a display name for your bot (e.g., `QuantDinger Signal Bot`)
+3. Enter a display name for your bot (e.g., `SharkQuant Signal Bot`)
 4. Choose a unique username ending with `bot` (e.g., `quantdinger_signal_bot`)
 
 ---

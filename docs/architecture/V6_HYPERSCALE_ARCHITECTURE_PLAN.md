@@ -1,4 +1,4 @@
-# QuantDinger V6 Hyperscale Architecture Plan
+# SharkQuant V6 Hyperscale Architecture Plan
 
 | Field | Value |
 | --- | --- |
@@ -33,7 +33,7 @@ acceptance tests. Operational details are maintained in the
 
 ## Executive summary
 
-QuantDinger V5 established explicit process ownership for HTTP APIs, trading
+SharkQuant V5 established explicit process ownership for HTTP APIs, trading
 runtimes, scheduled work, finite jobs, migrations, and durable coordination.
 That separation is a necessary foundation, but the current strategy runtime is
 not designed for 100,000 concurrently active strategies.
@@ -610,7 +610,7 @@ from removing all owners of a critical role.
 ### Regional disaster recovery
 
 The first V6 release uses active-passive regional recovery for live trading.
-Active-active order submission is deferred until QuantDinger can prove a global
+Active-active order submission is deferred until SharkQuant can prove a global
 account-level fencing protocol under network partition.
 
 The recovery plan must define:

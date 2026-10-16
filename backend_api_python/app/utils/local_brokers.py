@@ -12,10 +12,13 @@ def local_desktop_brokers_allowed() -> bool:
 
 
 def desktop_broker_cloud_reject_message() -> str:
+    from app.services.settings.branding import brand_env
+
+    product = brand_env("BRAND_APP_NAME", "app_name") or "this platform"
     return (
         "This server has disabled IBKR local desktop broker access "
-        "(requires local TWS or IB Gateway). Deploy QuantDinger on your own "
-        "machine or private server and install IBKR TWS/Gateway."
+        "(requires local TWS or IB Gateway). Deploy "
+        f"{product} on your own machine or private server and install IBKR TWS/Gateway."
     )
 
 

@@ -864,7 +864,7 @@ def _build_professional_report_pdf(report: dict, target: dict | None, language: 
             canvas.setFillColor(palette["navy"])
             canvas.rect(0, A4[1] - 8 * mm, page_width, 8 * mm, fill=1, stroke=0)
             canvas.setFillColor(palette["white"])
-            canvas.drawString(doc.leftMargin, A4[1] - 5.3 * mm, "QUANTDINGER  /  PROFESSIONAL RESEARCH")
+            canvas.drawString(doc.leftMargin, A4[1] - 5.3 * mm, "SHARKQUANT  /  PROFESSIONAL RESEARCH")
         canvas.restoreState()
 
     instrument = report.get("instrument") or {}
@@ -894,7 +894,7 @@ def _build_professional_report_pdf(report: dict, target: dict | None, language: 
     story: list[Any] = []
     hero = Table([
         [
-            [para("QUANTDINGER", subtitle_style), para(copy["title"], title_style), para(copy["subtitle"], subtitle_style)],
+            [para("SHARKQUANT", subtitle_style), para(copy["title"], title_style), para(copy["subtitle"], subtitle_style)],
             [para(copy["market_bias"], subtitle_style), para(bias_display, ParagraphStyle("ProOutlook", parent=title_style, fontSize=18, leading=22, textColor=outlook_color)), para(f"{copy['trade_action']}  {outlook_display}<br/>{copy['confidence']}  {pct(decision.get('confidence'))}", subtitle_style)],
         ]
     ], colWidths=[content_width * 0.69, content_width * 0.31])

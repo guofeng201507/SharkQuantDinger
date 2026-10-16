@@ -1,6 +1,6 @@
 # Security, versions, and vulnerability reporting
 
-QuantDinger handles model secrets, trading credentials, and account data. A production operator should treat the application, database, cache, and reverse proxy as one security boundary and restrict network access to administration surfaces.
+SharkQuant handles model secrets, trading credentials, and account data. A production operator should treat the application, database, cache, and reverse proxy as one security boundary and restrict network access to administration surfaces.
 
 ## Operator responsibilities
 

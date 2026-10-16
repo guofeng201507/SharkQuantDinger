@@ -1,4 +1,4 @@
-# First run with QuantDinger
+# First run with SharkQuant
 
 This guide connects installation, configuration, and the first validated workflow. Complete research, backtesting, and signal mode before using real capital.
 
@@ -44,7 +44,7 @@ Complete the [live-trading safety checklist](../trading/LIVE_TRADING_SAFETY.md) 
 
 ## 6. Optional: connect an Agent
 
-To use QuantDinger from Codex, Cursor, or Claude Code, issue an Agent Token with the minimum scopes and follow [MCP setup](../agent/MCP_SETUP.md). Never give an Agent an administrator password or a human JWT.
+To use SharkQuant from Codex, Cursor, or Claude Code, issue an Agent Token with the minimum scopes and follow [MCP setup](../agent/MCP_SETUP.md). Never give an Agent an administrator password or a human JWT.
 
 ## Completion criteria
 

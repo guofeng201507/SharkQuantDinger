@@ -137,14 +137,14 @@ CONFIG_SCHEMA = {
                 'key': 'BRAND_APP_NAME',
                 'label': 'settings.field.BRAND_APP_NAME',
                 'type': 'text',
-                'default': 'QuantDinger',
+                'default': 'SharkQuant',
                 'description': 'settings.desc.BRAND_APP_NAME'
             },
             {
                 'key': 'BRAND_COPYRIGHT',
                 'label': 'settings.field.BRAND_COPYRIGHT',
                 'type': 'text',
-                'default': '© 2025-2026 QuantDinger. All rights reserved.',
+                'default': '© 2025-2026 SharkQuant. All rights reserved.',
                 'description': 'settings.desc.BRAND_COPYRIGHT'
             },
             {
@@ -187,28 +187,28 @@ CONFIG_SCHEMA = {
                 'key': 'BRAND_CONTACT_EMAIL',
                 'label': 'settings.field.BRAND_CONTACT_EMAIL',
                 'type': 'text',
-                'default': 'support@quantdinger.com',
+                'default': 'support@sharkv2.com',
                 'description': 'settings.desc.BRAND_CONTACT_EMAIL'
             },
             {
                 'key': 'BRAND_CONTACT_SUPPORT_URL',
                 'label': 'settings.field.BRAND_CONTACT_SUPPORT_URL',
                 'type': 'text',
-                'default': 'https://t.me/quantdinger',
+                'default': 'https://t.me/sharkquant_support',
                 'description': 'settings.desc.BRAND_CONTACT_SUPPORT_URL'
             },
             {
                 'key': 'BRAND_CONTACT_LIVE_CHAT_URL',
                 'label': 'settings.field.BRAND_CONTACT_LIVE_CHAT_URL',
                 'type': 'text',
-                'default': 'https://t.me/quantdinger',
+                'default': 'https://t.me/sharkquant_support',
                 'description': 'settings.desc.BRAND_CONTACT_LIVE_CHAT_URL'
             },
             {
                 'key': 'BRAND_CONTACT_FEATURE_REQUEST_URL',
                 'label': 'settings.field.BRAND_CONTACT_FEATURE_REQUEST_URL',
                 'type': 'text',
-                'default': 'https://github.com/OpenByteInc/QuantDinger/issues',
+                'default': '',
                 'description': 'settings.desc.BRAND_CONTACT_FEATURE_REQUEST_URL'
             },
         ]
@@ -2172,7 +2172,7 @@ def get_brand_config():
     label entirely from backend ENV vars so operators can rebrand a deployment
     by editing ``.env`` (or the Settings page) — no frontend rebuild required.
 
-    Empty ENV values fall back to the bundled QuantDinger defaults so a fresh
+    Empty ENV values fall back to the bundled defaults so a fresh
     install still ships with working links instead of blanks.
     """
     return jsonify({

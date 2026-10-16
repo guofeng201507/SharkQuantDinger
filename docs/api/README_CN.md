@@ -1,4 +1,4 @@
-# QuantDinger Web API（OpenAPI）
+# SharkQuant Web API（OpenAPI）
 
 本目录提供面向人类用户会话的 REST API 契约。它与 `/api/agent/v1` 的 Agent Gateway 分开维护，请勿混用人类 JWT 和 Agent Token。
 
@@ -17,7 +17,7 @@ python -m http.server 8080
 # 打开 http://localhost:8080/index.html
 ```
 
-QuantDinger 后端启用调试模式或设置 `OPENAPI_ENABLED=true` 后，也可访问：
+SharkQuant 后端启用调试模式或设置 `OPENAPI_ENABLED=true` 后，也可访问：
 
 - Swagger UI：`http://localhost:5000/api/docs/swagger`
 - ReDoc：`http://localhost:5000/api/docs/redoc`

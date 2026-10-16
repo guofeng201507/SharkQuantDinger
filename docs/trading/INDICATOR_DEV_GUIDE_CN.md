@@ -1,9 +1,9 @@
-# QuantDinger 指标开发指南
+# SharkQuant 指标开发指南
 
-> 适用范围：当前 QuantDinger 图表指标契约
+> 适用范围：当前 SharkQuant 图表指标契约
 > 面向读者：第一次编写指标的用户、从 Pine/通达信公式迁移的开发者，以及需要审查 AI 生成代码的维护者
 
-QuantDinger 指标是运行在指标编辑器中的 Python 图表程序。它读取当前图表的 K 线数据，计算序列，并通过 <code>output</code> 返回曲线、标记和稀疏图层。
+SharkQuant 指标是运行在指标编辑器中的 Python 图表程序。它读取当前图表的 K 线数据，计算序列，并通过 <code>output</code> 返回曲线、标记和稀疏图层。
 
 最重要的边界是：**指标只负责看图，不负责交易执行。**
 
@@ -459,9 +459,9 @@ confirmed_entry = edge(raw_entry).shift(
 
 ## 10. 与 TradingView/Pine 的能力对应
 
-QuantDinger 不执行 Pine 源码。迁移目标是保持指标含义、数值时序和视觉表达一致，再用 Python/pandas 实现。以下是当前契约的真实边界：
+SharkQuant 不执行 Pine 源码。迁移目标是保持指标含义、数值时序和视觉表达一致，再用 Python/pandas 实现。以下是当前契约的真实边界：
 
-| TradingView/Pine 能力域 | 当前状态 | QuantDinger 写法或限制 |
+| TradingView/Pine 能力域 | 当前状态 | SharkQuant 写法或限制 |
 | --- | --- | --- |
 | OHLCV、历史引用、滚动窗口 | 支持 | <code>df</code>、<code>shift</code>、<code>rolling</code>、<code>ewm</code> |
 | <code>input.int/float/bool/string</code> | 支持主要语义 | <code># @param</code>；暂不支持 Pine 的 group、inline、confirm 和专用 color/source/timeframe/symbol 输入控件 |

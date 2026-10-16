@@ -74,14 +74,14 @@ HK_INDUSTRIES = (
 
 
 def _csv_rows(url: str) -> list[dict]:
-    response = requests.get(url, timeout=30, headers={"User-Agent": "QuantDinger/4.0"})
+    response = requests.get(url, timeout=30, headers={"User-Agent": "SharkQuant/4.0"})
     response.raise_for_status()
     return list(csv.DictReader(io.StringIO(response.text)))
 
 
 def hk_factsheet(factsheet_code: str) -> list[dict]:
     url = f"{HSI_FACTSHEET_BASE}/{factsheet_code}.pdf"
-    response = requests.get(url, timeout=45, headers={"User-Agent": "QuantDinger/4.0"})
+    response = requests.get(url, timeout=45, headers={"User-Agent": "SharkQuant/4.0"})
     response.raise_for_status()
     reader = PdfReader(io.BytesIO(response.content))
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
@@ -188,7 +188,7 @@ def crypto_top100() -> list[dict]:
             "sparkline": "false",
         },
         timeout=30,
-        headers={"User-Agent": "QuantDinger/4.0"},
+        headers={"User-Agent": "SharkQuant/4.0"},
     )
     response.raise_for_status()
     rows = []

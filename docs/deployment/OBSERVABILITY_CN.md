@@ -23,7 +23,7 @@ docker compose \
 | Prometheus | `http://127.0.0.1:9090` | 指标采集、存储与查询 |
 | Alertmanager | `http://127.0.0.1:9093` | 告警分组、静默与发送 |
 
-Grafana 会自动配置 Prometheus 数据源和 `QuantDinger Runtime Overview` 仪表盘。
+Grafana 会自动配置 Prometheus 数据源和 `SharkQuant Runtime Overview` 仪表盘。
 将 Grafana 放到反向代理后之前，必须修改 `GRAFANA_ADMIN_PASSWORD`。
 
 ## 默认监控范围

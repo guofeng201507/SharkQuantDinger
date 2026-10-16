@@ -1,4 +1,4 @@
-# QuantDinger MCP Server
+# SharkQuant MCP Server
 
 The MCP server is a thin, tenant-scoped wrapper over `/api/agent/v1`. It exposes research universes and factors, market data, chart-indicator authoring, Strategy API V2 deployment and backtesting, broker/execution observations, notification automation, bounded jobs, and safety-gated trading.
 

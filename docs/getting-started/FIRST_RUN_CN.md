@@ -1,4 +1,4 @@
-# 第一次运行 QuantDinger
+# 第一次运行 SharkQuant
 
 本指南把安装、配置和第一次验证串成一条最短路径。建议先完成研究、回测和信号模式，再连接真实资金。
 
@@ -44,7 +44,7 @@
 
 ## 6. 可选：连接 Agent
 
-需要在 Codex、Cursor 或 Claude Code 中使用 QuantDinger 时，创建最小 Scope 的 Agent Token，再按 [MCP 接入指南](../agent/MCP_SETUP_CN.md)连接。不要把管理员密码或人类 JWT 交给 Agent。
+需要在 Codex、Cursor 或 Claude Code 中使用 SharkQuant 时，创建最小 Scope 的 Agent Token，再按 [MCP 接入指南](../agent/MCP_SETUP_CN.md)连接。不要把管理员密码或人类 JWT 交给 Agent。
 
 ## 完成标准
 

@@ -1,10 +1,10 @@
 # MCP 接入指南
 
-QuantDinger MCP Server 将 Agent Gateway 封装为 Agent 可调用的工具；REST API 仍是服务端事实来源。
+SharkQuant MCP Server 将 Agent Gateway 封装为 Agent 可调用的工具；REST API 仍是服务端事实来源。
 
 ## 前置条件
 
-- QuantDinger 已启动，并能通过 `http://localhost:8888` 访问。
+- SharkQuant 已启动，并能通过 `http://localhost:8888` 访问。
 - 已在管理界面创建 Agent Token，并只授予任务需要的 Scope。
 - 本机有 Python 和 `pip`（使用仓库源码开发时可改为可编辑安装）。
 
@@ -52,11 +52,11 @@ QUANTDINGER_AGENT_TOKEN=qd_agent_xxx
 监听非回环地址时，服务端要求独立的 `QUANTDINGER_MCP_AUTH_TOKEN`（至少 32 个字符），并建议配置外部可访问的 HTTPS 地址 `QUANTDINGER_MCP_PUBLIC_URL`。注意两类凭据职责不同：
 
 - `QUANTDINGER_MCP_AUTH_TOKEN` 保护 MCP 网络入口；
-- `QUANTDINGER_AGENT_TOKEN` 标识并限制上游 QuantDinger 租户权限。
+- `QUANTDINGER_AGENT_TOKEN` 标识并限制 SharkQuant 上的租户权限。
 
 ## 验收清单
 
-1. 客户端能发现 QuantDinger 工具。
+1. 客户端能发现 SharkQuant 工具。
 2. 使用 `whoami` 或只读工具确认 Base URL、租户和 Scope 正确。
 3. 先以只读或模拟盘流程验证；实盘 Token 不应授予无关 Scope。
 4. 对写入、回测、通知、交易类工具使用唯一幂等键，并保留人工确认。

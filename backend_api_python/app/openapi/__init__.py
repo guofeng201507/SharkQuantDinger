@@ -28,13 +28,13 @@ def _openapi_enabled() -> bool:
 
 def init_openapi(app: Flask) -> Api:
     """Register flask-smorest, shared components, and documented blueprints."""
-    app.config.setdefault("API_TITLE", "QuantDinger Web API")
+    app.config.setdefault("API_TITLE", "SharkQuant Web API")
     app.config.setdefault("API_VERSION", "1.0.0")
     app.config.setdefault("OPENAPI_VERSION", "3.0.3")
     app.config.setdefault(
         "OPENAPI_DESCRIPTION",
         (
-            "Human-facing REST API for QuantDinger. "
+            "Human-facing REST API for SharkQuant. "
             "Agent integrations use `/api/agent/v1` — see "
             "`docs/agent/agent-openapi.json`. "
             "Conventions: `docs/architecture/API_CONVENTIONS.md`."
@@ -47,8 +47,7 @@ def init_openapi(app: Flask) -> Api:
             "info": {
                 "description": app.config.get("OPENAPI_DESCRIPTION", ""),
                 "contact": {
-                    "name": "QuantDinger",
-                    "url": "https://github.com/OpenByteInc/quantdinger",
+                    "name": "SharkQuant",
                 },
                 "license": {
                     "name": "See repository LICENSE",

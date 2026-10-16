@@ -1,7 +1,7 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "QuantDinger Agent Gateway",
+    "title": "SharkQuant Agent Gateway",
     "version": "1.0.0",
     "description": "Versioned, scoped surface for AI agents. Distinct from the human web API (/api/...). All routes except /health require a Bearer agent token. See docs/agent/AGENT_QUICKSTART.md and docs/agent/MCP_SETUP.md."
   },

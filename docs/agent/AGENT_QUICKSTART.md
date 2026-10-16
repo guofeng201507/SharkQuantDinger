@@ -1,6 +1,6 @@
 # Agent Gateway Quickstart
 
-QuantDinger exposes a tenant-scoped Agent Gateway at `/api/agent/v1`. Agent tokens are separate from human JWT sessions and enforce capability scopes, market/instrument allowlists, rate limits, expiry, and paper-only restrictions.
+SharkQuant exposes a tenant-scoped Agent Gateway at `/api/agent/v1`. Agent tokens are separate from human JWT sessions and enforce capability scopes, market/instrument allowlists, rate limits, expiry, and paper-only restrictions.
 
 The machine-readable contract is [agent-openapi.json](agent-openapi.json). MCP setup is documented in [MCP_SETUP.md](MCP_SETUP.md).
 

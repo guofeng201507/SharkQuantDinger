@@ -1,6 +1,6 @@
 # MCP Setup
 
-QuantDinger's MCP server wraps the Agent Gateway and keeps the REST API as the source of truth.
+SharkQuant's MCP server wraps the Agent Gateway and keeps the REST API as the source of truth.
 
 ## Install
 

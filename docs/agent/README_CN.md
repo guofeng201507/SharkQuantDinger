@@ -1,6 +1,6 @@
 # Agent 与 MCP 文档
 
-本目录说明外部 AI Agent 如何通过受控接口使用 QuantDinger。建议人工接入者从中文指南开始；自动化工具应以 OpenAPI 和英文标识符为准。
+本目录说明外部 AI Agent 如何通过受控接口使用 SharkQuant。建议人工接入者从中文指南开始；自动化工具应以 OpenAPI 和英文标识符为准。
 
 ## 推荐阅读顺序
 

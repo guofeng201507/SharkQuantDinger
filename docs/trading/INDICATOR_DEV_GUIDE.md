@@ -1,9 +1,9 @@
-# QuantDinger Indicator Development Guide
+# SharkQuant Indicator Development Guide
 
-> Applies to: the current QuantDinger chart-indicator contract
+> Applies to: the current SharkQuant chart-indicator contract
 > Audience: first-time indicator authors, developers migrating Pine/TDX formulas, and reviewers of AI-generated code
 
-A QuantDinger indicator is a Python chart program that runs in the Indicator IDE. It reads the current K-line DataFrame, calculates aligned series, and returns plots, markers, and sparse chart layers through <code>output</code>.
+A SharkQuant indicator is a Python chart program that runs in the Indicator IDE. It reads the current K-line DataFrame, calculates aligned series, and returns plots, markers, and sparse chart layers through <code>output</code>.
 
 The most important boundary is: **an indicator is for chart analysis, not trade execution.**
 
@@ -453,9 +453,9 @@ Layers remain visual objects. They do not represent real orders, positions, or h
 
 ## 10. TradingView/Pine capability mapping
 
-QuantDinger does not execute Pine source. Migration means preserving indicator meaning, numerical timing, and visual expression with Python/pandas. This table is the current contract boundary:
+SharkQuant does not execute Pine source. Migration means preserving indicator meaning, numerical timing, and visual expression with Python/pandas. This table is the current contract boundary:
 
-| TradingView/Pine capability | Current status | QuantDinger equivalent or limit |
+| TradingView/Pine capability | Current status | SharkQuant equivalent or limit |
 | --- | --- | --- |
 | OHLCV, history references, rolling windows | Supported | <code>df</code>, <code>shift</code>, <code>rolling</code>, <code>ewm</code> |
 | <code>input.int/float/bool/string</code> | Core semantics supported | <code># @param</code>; Pine group, inline, confirm, and dedicated color/source/timeframe/symbol controls are not available |

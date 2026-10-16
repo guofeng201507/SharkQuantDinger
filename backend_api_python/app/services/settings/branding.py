@@ -7,17 +7,19 @@ from typing import Dict, List
 
 
 BRAND_DEFAULTS = {
-    "app_name": "QuantDinger",
-    "copyright": "© 2025-2026 QuantDinger. All rights reserved.",
-    "contact_email": "support@quantdinger.com",
-    "contact_support_url": "https://t.me/quantdinger",
-    "contact_feature_request_url": "https://github.com/OpenByteInc/QuantDinger/issues",
-    "contact_live_chat_url": "https://t.me/quantdinger",
-    "social_github": "https://github.com/OpenByteInc/QuantDinger",
-    "social_x": "https://x.com/quantdinger_en",
-    "social_discord": "https://discord.com/invite/tyx5B6TChr",
-    "social_telegram": "https://t.me/quantdinger",
-    "social_youtube": "https://youtube.com/@quantdinger",
+    "app_name": "SharkQuant",
+    "copyright": "© 2025-2026 SharkQuant. All rights reserved.",
+    "contact_email": "support@sharkv2.com",
+    "contact_support_url": "https://t.me/sharkquant_support",
+    "contact_feature_request_url": "",
+    "contact_live_chat_url": "https://t.me/sharkquant_support",
+    # Social defaults are empty on purpose: an unconfigured deployment should not
+    # point users at another project's accounts.
+    "social_github": "",
+    "social_x": "",
+    "social_discord": "",
+    "social_telegram": "",
+    "social_youtube": "",
 }
 
 
@@ -67,7 +69,7 @@ def brand_env(name: str, default: str = "") -> str:
 
     A variable that is present but empty is an explicit "no value / hide"
     (the .env template documents "leave empty to hide"); only a completely
-    unset variable falls back to the bundled QuantDinger default. The previous
+    unset variable falls back to the bundled default. The previous
     implementation treated empty as unset, which made it impossible to hide
     the default social icons / contact links on a rebranded deployment.
     """

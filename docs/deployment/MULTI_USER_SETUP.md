@@ -1,6 +1,6 @@
 # Multi-User Operation
 
-QuantDinger v5 uses PostgreSQL-backed users by default. `SINGLE_USER_MODE` is a
+SharkQuant v5 uses PostgreSQL-backed users by default. `SINGLE_USER_MODE` is a
 legacy compatibility option and should remain `false` for a normal deployment.
 
 [中文](MULTI_USER_SETUP_CN.md)

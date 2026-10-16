@@ -1,6 +1,6 @@
-# QuantDinger Cloud Deployment Guide
+# SharkQuant Cloud Deployment Guide
 
-This guide describes the current production-style Docker deployment for QuantDinger on a cloud server. It covers the recommended GHCR image deployment, optional source deployment, Nginx, HTTPS, upgrades, and common troubleshooting.
+This guide describes the current production-style Docker deployment for SharkQuant on a cloud server. It covers the recommended GHCR image deployment, optional source deployment, Nginx, HTTPS, upgrades, and common troubleshooting.
 
 For first-time Docker pull and Postgres startup issues, also see [Installation Troubleshooting](INSTALL_TROUBLESHOOTING.md).
 
@@ -130,7 +130,7 @@ Use this mode only when you need to build the backend from local source.
 
 ```bash
 git clone https://github.com/OpenByteInc/QuantDinger.git
-cd QuantDinger
+cd SharkQuant
 cp .env.example .env
 ./scripts/generate-secret-key.sh
 ```

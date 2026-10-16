@@ -1,6 +1,6 @@
 # Agent Gateway 快速开始
 
-QuantDinger 在 `/api/agent/v1` 提供租户隔离的 Agent Gateway。Agent Token 与人类用户 JWT 相互独立，并受 Scope、市场与标的白名单、速率、有效期、模拟盘限制和名义金额上限约束。
+SharkQuant 在 `/api/agent/v1` 提供租户隔离的 Agent Gateway。Agent Token 与人类用户 JWT 相互独立，并受 Scope、市场与标的白名单、速率、有效期、模拟盘限制和名义金额上限约束。
 
 ## 1. 创建并验证令牌
 

@@ -105,7 +105,7 @@ app = create_app()
 def main():
     """Start the application."""
     # Keep startup messages ASCII-only and short.
-    print("QuantDinger Python API v2.2.2")
+    print("SharkQuant Python API v2.2.2")
     
     # ========== Critical Security Check for SECRET_KEY ==========
     # Config.SECRET_KEY fails closed when the key is missing, public, or too

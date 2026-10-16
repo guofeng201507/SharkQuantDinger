@@ -1,6 +1,6 @@
 # Architecture Overview
 
-QuantDinger v5 separates HTTP request handling, trading control and execution,
+SharkQuant v5 separates HTTP request handling, trading control and execution,
 closed-bar dispatch/evaluation, scheduling, finite background jobs, and schema
 migration into explicit process roles. PostgreSQL coordinates durable ownership,
 Kafka carries versioned runtime events, and the two Redis tiers serve different

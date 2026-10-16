@@ -8,7 +8,7 @@ For general installation problems, see
 
 ## Initial Administrator Behavior
 
-On an empty database, QuantDinger creates the initial administrator from
+On an empty database, SharkQuant creates the initial administrator from
 `ADMIN_USER`, `ADMIN_PASSWORD`, and optional `ADMIN_EMAIL`. The password is
 stored as a password hash (bcrypt in the standard image), never as plaintext.
 
@@ -27,7 +27,7 @@ legacy migration occurs only when all of the following are true:
 - a valid, non-default administrator username and password are configured;
 - the requested username is not already used by another account.
 
-QuantDinger never overwrites an administrator whose password has already been
+SharkQuant never overwrites an administrator whose password has already been
 changed. If another account already uses the requested username, migration stops
 instead of promoting or merging that account.
 

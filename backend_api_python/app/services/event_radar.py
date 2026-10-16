@@ -492,7 +492,7 @@ class EventRadarService:
             raw_default = "true" if default else "false"
             return str(value(key, raw_default)).strip().lower() in {"1", "true", "yes", "on"}
 
-        contact_email = str(value("BRAND_CONTACT_EMAIL", "support@quantdinger.com") or "").strip()
+        contact_email = str(value("BRAND_CONTACT_EMAIL", "support@sharkv2.com") or "").strip()
         sec_user_agent = str(value("SEC_EDGAR_USER_AGENT", "") or "").strip()
         if not sec_user_agent and contact_email:
             sec_user_agent = f"SharkQuant Event Radar {contact_email}"

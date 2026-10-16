@@ -1,6 +1,6 @@
-"""QuantDinger MCP server.
+"""SharkQuant MCP server.
 
-This server is intentionally a thin wrapper over the QuantDinger Agent
+This server is intentionally a thin wrapper over the SharkQuant Agent
 Gateway (`/api/agent/v1`). The REST API stays the source of truth; MCP only
 exposes a curated tool surface for agent clients.
 """
@@ -206,14 +206,14 @@ def _request(method: str, path: str, **kwargs: Any) -> Any:
         return {
             "error": True,
             "status": 504,
-            "body": {"message": "QuantDinger Agent Gateway request timed out", "retriable": True},
+            "body": {"message": "SharkQuant Agent Gateway request timed out", "retriable": True},
         }
     except httpx.RequestError as exc:
         return {
             "error": True,
             "status": 503,
             "body": {
-                "message": "QuantDinger Agent Gateway is unavailable",
+                "message": "SharkQuant Agent Gateway is unavailable",
                 "retriable": True,
                 "details": str(exc),
             },
@@ -238,13 +238,13 @@ def _unwrap(r: httpx.Response) -> Any:
 _auth_settings, _token_verifier = _http_auth_config()
 
 mcp = FastMCP(
-    "quantdinger",
+    "sharkquant",
     host=MCP_HOST,
     port=MCP_PORT,
     auth=_auth_settings,
     token_verifier=_token_verifier,
     instructions=(
-        "Tools for the QuantDinger self-hosted quant platform. "
+        "Tools for the SharkQuant self-hosted quant platform. "
         "All tools are tenant-scoped via the configured agent token. "
         "Live order placement is available only through place_quick_order with "
         "T scope, confirm_order=true, and confirm_live_trading=true when the "

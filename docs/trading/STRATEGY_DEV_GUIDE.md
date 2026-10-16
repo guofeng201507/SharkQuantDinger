@@ -1,9 +1,9 @@
 # Strategy API V2 Development Guide
 
-> Applies to: the current executable QuantDinger strategy contract
+> Applies to: the current executable SharkQuant strategy contract
 > Audience: first-time strategy authors, indicator-conversion users, and developers targeting both backtest and live execution
 
-QuantDinger has one current executable Python strategy contract: **Strategy API V2**. The same source compiles into a strategy manifest used by backtest and live runtimes for instruments, subscriptions, events, order intents, portfolio accounting, and protection rules.
+SharkQuant has one current executable Python strategy contract: **Strategy API V2**. The same source compiles into a strategy manifest used by backtest and live runtimes for instruments, subscriptions, events, order intents, portfolio accounting, and protection rules.
 
 The source owns its market, instruments, timeframe, schedules, and trading logic. Single-timeframe is the default; a source declares several timeframes only when its logic explicitly requires cross-timeframe confirmation. Run forms provide dates, initial capital, costs, source-permitted leverage, and user parameters; they do not override source-controlled markets, symbols, or timeframes.
 
@@ -949,7 +949,7 @@ Mixed-market live deployment is unsupported. Other markets cannot be forced thro
 - Grid strategies run the same ownership check on every resting-order sync. Drift cancels unfilled entry orders on that leg. If the account is below its protected allocation or the protection ledger cannot be verified, potentially oversized exits are also cancelled and rebuilt from strategy inventory, existing exits, and the protected floor.
 - Closes/reductions remain available but are capped by the strategy ledger, actual exchange inventory, and protected baseline. They can never cross protected manual inventory, and are not a tool for absorbing an unknown delta.
 - The Ownership & Repair page exposes <code>protect_manual</code> (record the current delta and enable advanced mode), <code>strict_mode</code> (clear the floor and return to strict mode), and <code>recheck</code> (refresh and reconcile). These actions update ownership records only and never trade automatically.
-- Advanced coexistence is QuantDinger ledger isolation, not physical venue isolation. Spot inventory still shares the account balance; same-side derivatives still share venue entry price, margin, and liquidation risk.
+- Advanced coexistence is SharkQuant ledger isolation, not physical venue isolation. Spot inventory still shares the account balance; same-side derivatives still share venue entry price, margin, and liquidation risk.
 - Same account/exchange/market/symbol/leg ownership is exclusive. Confirmed hedge mode can allow separate long-only and short-only strategies on opposite legs; <code>both</code>/<code>neutral</code> reserves both.
 - Minimum quantity, quantity step, minimum notional, available margin, leverage, and venue caps are applied after strategy sizing. The final submitted quantity can differ from the raw request.
 - Only derivative opens/adds configure margin mode and leverage. Closes/reductions skip account configuration so a configuration endpoint failure cannot block an exit. Binance configuration is read before mutation so an already-matching margin mode or leverage is not rewritten. After Binance HTTP 408, <code>-1000</code>, <code>-1006</code>, <code>-1007</code>, or another ambiguous configuration outcome, the runtime reads configuration back and proceeds only when the observed margin mode/leverage matches the target.

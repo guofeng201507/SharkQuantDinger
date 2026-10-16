@@ -1,6 +1,6 @@
 # 自建前端部署
 
-本文档说明如何用**自建前端**（Vue 3 SPA + Fastify BFF）替换 QuantDinger 服务器上的原版 GHCR 前端。
+本文档说明如何用**自建前端**（Vue 3 SPA + Fastify BFF）替换 SharkQuant 服务器上的原版 GHCR 前端。
 它假定采用 [云部署](CLOUD_DEPLOYMENT_CN.md) 中的宿主机 Nginx 方案：宿主机 Nginx 把公网域名的全部流量
 （含 `/api` 与 `/ws`）反代到 `127.0.0.1:8888`，TLS 由 Certbot 管理。
 
