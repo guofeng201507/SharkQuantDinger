@@ -7,6 +7,7 @@ from app.services.backtest_limits import backtest_range_policy_metadata
 from app.services.script_source import get_script_source_service
 from app.services.strategy_v2 import (
     StrategyBacktestRepository,
+    StrategyV2ContractError,
     canonical_source_metadata,
     compile_strategy_v2,
     strategy_source_code_hash,
@@ -15,6 +16,20 @@ from app.utils.auth import login_required
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _rejected_source_response(exc: Exception):
+    """A script the compiler refuses is a bad request, not a server fault.
+
+    The contract only ever documented 400 here, and callers localize
+    `strategyV2.compileFailed` while showing the compiler's own reason (an i18n
+    key such as `strategyV2.initializeRequired`, or the syntax error text).
+    """
+    return jsonify({
+        "code": 0,
+        "msg": "strategyV2.compileFailed",
+        "data": {"error_type": "COMPILE_FAILED", "detail": str(exc) or "strategyV2.compileFailed"},
+    }), 400
 
 
 def _source_payload() -> dict:
@@ -154,8 +169,12 @@ def create_script_source():
         source_id = get_script_source_service().create_source(payload)
         item = _mask_hidden_source(get_script_source_service().get_source(source_id, user_id=g.user_id))
         return jsonify({"code": 1, "msg": "success", "data": item})
+    except StrategyV2ContractError as exc:
+        return _rejected_source_response(exc)
+    except ValueError as exc:
+        return jsonify({"code": 0, "msg": str(exc), "data": None}), 400
     except Exception as exc:
-        logger.error("create_script_source failed: %s", exc)
+        logger.error("create_script_source failed: %s", exc, exc_info=True)
         return jsonify({"code": 0, "msg": str(exc), "data": None}), 500
 
 
@@ -172,8 +191,12 @@ def update_script_source():
             return jsonify({"code": 0, "msg": "script source not found", "data": None}), 404
         item = _mask_hidden_source(get_script_source_service().get_source(source_id, user_id=g.user_id))
         return jsonify({"code": 1, "msg": "success", "data": item})
+    except StrategyV2ContractError as exc:
+        return _rejected_source_response(exc)
+    except ValueError as exc:
+        return jsonify({"code": 0, "msg": str(exc), "data": None}), 400
     except Exception as exc:
-        logger.error("update_script_source failed: %s", exc)
+        logger.error("update_script_source failed: %s", exc, exc_info=True)
         return jsonify({"code": 0, "msg": str(exc), "data": None}), 500
 
 
@@ -211,7 +234,7 @@ def compile_script_source_v2():
             "data": {"manifest": manifest, "backtestRangePolicy": range_policy},
         })
     except ValueError as exc:
-        return jsonify({"code": 0, "msg": str(exc), "data": None}), 400
+        return _rejected_source_response(exc)
     except Exception as exc:
         logger.error("compile_script_source_v2 failed: %s", exc, exc_info=True)
         return jsonify({"code": 0, "msg": "strategyV2.compileFailed", "data": None}), 500
@@ -348,6 +371,10 @@ def publish_script_source():
         if not ok:
             return jsonify({"code": 0, "msg": msg, "data": data}), 400
         return jsonify({"code": 1, "msg": "success", "data": data})
+    except StrategyV2ContractError as exc:
+        return _rejected_source_response(exc)
+    except ValueError as exc:
+        return jsonify({"code": 0, "msg": str(exc), "data": None}), 400
     except Exception as exc:
         logger.error("publish_script_source failed: %s", exc)
         return jsonify({"code": 0, "msg": str(exc), "data": None}), 500
