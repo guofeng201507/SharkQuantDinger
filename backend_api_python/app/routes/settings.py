@@ -135,45 +135,45 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'BRAND_APP_NAME',
-                'label': 'App Name',
+                'label': 'settings.field.BRAND_APP_NAME',
                 'type': 'text',
                 'default': 'QuantDinger',
-                'description': 'Product name shown in the browser tab title and footer copyright.'
+                'description': 'settings.desc.BRAND_APP_NAME'
             },
             {
                 'key': 'BRAND_COPYRIGHT',
-                'label': 'Footer Copyright',
+                'label': 'settings.field.BRAND_COPYRIGHT',
                 'type': 'text',
                 'default': '© 2025-2026 QuantDinger. All rights reserved.',
-                'description': 'Plain-text copyright line shown at the bottom of every page.'
+                'description': 'settings.desc.BRAND_COPYRIGHT'
             },
             {
                 'key': 'BRAND_LOGO_LIGHT_URL',
-                'label': 'Logo URL (Light theme)',
+                'label': 'settings.field.BRAND_LOGO_LIGHT_URL',
                 'type': 'text',
                 'required': False,
-                'description': 'Public URL to a wide logo for the light theme. Recommended size 240x60 px (PNG / SVG / WebP, ~4:1 aspect ratio, transparent background). Leave empty to use the bundled default (src/assets/logo.png).'
+                'description': 'settings.desc.BRAND_LOGO_LIGHT_URL'
             },
             {
                 'key': 'BRAND_LOGO_DARK_URL',
-                'label': 'Logo URL (Dark theme)',
+                'label': 'settings.field.BRAND_LOGO_DARK_URL',
                 'type': 'text',
                 'required': False,
-                'description': 'Public URL to a wide logo for the dark theme. Recommended size 240x60 px (PNG / SVG / WebP, ~4:1 aspect ratio, transparent background). Leave empty to use the bundled logo_w.png.'
+                'description': 'settings.desc.BRAND_LOGO_DARK_URL'
             },
             {
                 'key': 'BRAND_LOGO_COLLAPSED_URL',
-                'label': 'Logo URL (Collapsed sidebar)',
+                'label': 'settings.field.BRAND_LOGO_COLLAPSED_URL',
                 'type': 'text',
                 'required': False,
-                'description': 'Public URL to a square / mark-only logo shown when the sidebar is collapsed. Recommended size 64x64 px (PNG / SVG, 1:1 aspect ratio).'
+                'description': 'settings.desc.BRAND_LOGO_COLLAPSED_URL'
             },
             {
                 'key': 'BRAND_FAVICON_URL',
-                'label': 'Favicon URL',
+                'label': 'settings.field.BRAND_FAVICON_URL',
                 'type': 'text',
                 'required': False,
-                'description': 'Public URL to the browser tab icon. Recommended size 32x32 px (PNG or ICO).'
+                'description': 'settings.desc.BRAND_FAVICON_URL'
             },
         ]
     },
@@ -185,31 +185,31 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'BRAND_CONTACT_EMAIL',
-                'label': 'Support Email',
+                'label': 'settings.field.BRAND_CONTACT_EMAIL',
                 'type': 'text',
                 'default': 'support@quantdinger.com',
-                'description': 'Public support email shown in the sidebar footer (mailto:).'
+                'description': 'settings.desc.BRAND_CONTACT_EMAIL'
             },
             {
                 'key': 'BRAND_CONTACT_SUPPORT_URL',
-                'label': 'Support / Help URL',
+                'label': 'settings.field.BRAND_CONTACT_SUPPORT_URL',
                 'type': 'text',
                 'default': 'https://t.me/quantdinger',
-                'description': 'Link target for the "Support" footer item (Telegram group, ticket portal, etc.).'
+                'description': 'settings.desc.BRAND_CONTACT_SUPPORT_URL'
             },
             {
                 'key': 'BRAND_CONTACT_LIVE_CHAT_URL',
-                'label': 'Live Chat URL',
+                'label': 'settings.field.BRAND_CONTACT_LIVE_CHAT_URL',
                 'type': 'text',
                 'default': 'https://t.me/quantdinger',
-                'description': 'Link target for the "Live Chat" footer item.'
+                'description': 'settings.desc.BRAND_CONTACT_LIVE_CHAT_URL'
             },
             {
                 'key': 'BRAND_CONTACT_FEATURE_REQUEST_URL',
-                'label': 'Feature Request URL',
+                'label': 'settings.field.BRAND_CONTACT_FEATURE_REQUEST_URL',
                 'type': 'text',
                 'default': 'https://github.com/OpenByteInc/QuantDinger/issues',
-                'description': 'Where to send users who want to file an issue or feature request.'
+                'description': 'settings.desc.BRAND_CONTACT_FEATURE_REQUEST_URL'
             },
         ]
     },
@@ -221,38 +221,38 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'BRAND_SOCIAL_GITHUB',
-                'label': 'GitHub URL',
+                'label': 'settings.field.BRAND_SOCIAL_GITHUB',
                 'type': 'text',
                 'required': False,
-                'description': 'Leave empty to hide this icon in the sidebar footer.'
+                'description': 'settings.desc.BRAND_SOCIAL_GITHUB'
             },
             {
                 'key': 'BRAND_SOCIAL_X',
-                'label': 'X (Twitter) URL',
+                'label': 'settings.field.BRAND_SOCIAL_X',
                 'type': 'text',
                 'required': False,
-                'description': 'Leave empty to hide this icon in the sidebar footer.'
+                'description': 'settings.desc.BRAND_SOCIAL_X'
             },
             {
                 'key': 'BRAND_SOCIAL_DISCORD',
-                'label': 'Discord URL',
+                'label': 'settings.field.BRAND_SOCIAL_DISCORD',
                 'type': 'text',
                 'required': False,
-                'description': 'Leave empty to hide this icon in the sidebar footer.'
+                'description': 'settings.desc.BRAND_SOCIAL_DISCORD'
             },
             {
                 'key': 'BRAND_SOCIAL_TELEGRAM',
-                'label': 'Telegram URL',
+                'label': 'settings.field.BRAND_SOCIAL_TELEGRAM',
                 'type': 'text',
                 'required': False,
-                'description': 'Leave empty to hide this icon in the sidebar footer.'
+                'description': 'settings.desc.BRAND_SOCIAL_TELEGRAM'
             },
             {
                 'key': 'BRAND_SOCIAL_YOUTUBE',
-                'label': 'YouTube URL',
+                'label': 'settings.field.BRAND_SOCIAL_YOUTUBE',
                 'type': 'text',
                 'required': False,
-                'description': 'Leave empty to hide this icon in the sidebar footer.'
+                'description': 'settings.desc.BRAND_SOCIAL_YOUTUBE'
             },
         ]
     },
@@ -264,45 +264,45 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'BRAND_LEGAL_USER_AGREEMENT_URL',
-                'label': 'User Agreement URL',
+                'label': 'settings.field.BRAND_LEGAL_USER_AGREEMENT_URL',
                 'type': 'text',
                 'required': False,
-                'description': 'External Terms of Service URL. Takes priority — when set, the "User Agreement" link opens in a new tab. Leave empty to use inline text or the built-in default copy.'
+                'description': 'settings.desc.BRAND_LEGAL_USER_AGREEMENT_URL'
             },
             {
                 'key': 'BRAND_LEGAL_USER_AGREEMENT_TEXT',
-                'label': 'User Agreement (inline text)',
+                'label': 'settings.field.BRAND_LEGAL_USER_AGREEMENT_TEXT',
                 'type': 'text',
                 'required': False,
-                'description': 'Inline Terms of Service text shown in the modal. Used only when the URL above is empty.'
+                'description': 'settings.desc.BRAND_LEGAL_USER_AGREEMENT_TEXT'
             },
             {
                 'key': 'BRAND_LEGAL_PRIVACY_POLICY_URL',
-                'label': 'Privacy Policy URL',
+                'label': 'settings.field.BRAND_LEGAL_PRIVACY_POLICY_URL',
                 'type': 'text',
                 'required': False,
-                'description': 'External privacy policy URL. URL takes priority over inline text.'
+                'description': 'settings.desc.BRAND_LEGAL_PRIVACY_POLICY_URL'
             },
             {
                 'key': 'BRAND_LEGAL_PRIVACY_POLICY_TEXT',
-                'label': 'Privacy Policy (inline text)',
+                'label': 'settings.field.BRAND_LEGAL_PRIVACY_POLICY_TEXT',
                 'type': 'text',
                 'required': False,
-                'description': 'Inline privacy policy text shown in the modal. Used only when the URL above is empty.'
+                'description': 'settings.desc.BRAND_LEGAL_PRIVACY_POLICY_TEXT'
             },
             {
                 'key': 'MOBILE_APP_LATEST_VERSION',
-                'label': 'Mobile App Latest Version',
+                'label': 'settings.field.MOBILE_APP_LATEST_VERSION',
                 'type': 'text',
                 'required': False,
-                'description': 'Semver-like version string for the in-app upgrade prompt. Leave empty to disable the prompt.'
+                'description': 'settings.desc.MOBILE_APP_LATEST_VERSION'
             },
             {
                 'key': 'MOBILE_APP_DOWNLOAD_URL',
-                'label': 'Mobile App Download URL',
+                'label': 'settings.field.MOBILE_APP_DOWNLOAD_URL',
                 'type': 'text',
                 'required': False,
-                'description': 'APK / install page URL surfaced when the mobile app reports an old version.'
+                'description': 'settings.desc.MOBILE_APP_DOWNLOAD_URL'
             },
         ]
     },
