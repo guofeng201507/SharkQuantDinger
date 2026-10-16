@@ -403,7 +403,7 @@ CONFIG_SCHEMA = {
                 'key': 'EVENT_RADAR_JEV_MIN_CONFIDENCE',
                 'label': 'settings.field.EVENT_RADAR_JEV_MIN_CONFIDENCE',
                 'type': 'number',
-                'default': 0.65,
+                'default': 0.30,
                 'description': 'settings.desc.EVENT_RADAR_JEV_MIN_CONFIDENCE'
             },
             {

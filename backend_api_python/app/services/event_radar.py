@@ -71,6 +71,11 @@ JEV_OPTIONS = {
     "freshness": {"fresh", "mixed", "stale"},
 }
 
+# Gates the verdict like the live entry filter's risk_check/execution_quality.
+# impact/freshness stay informational: JEV reports low self-confidence on
+# ambiguous direction, so gating all four discarded every JEV read.
+JEV_GATING_QUESTIONS = ("relevance", "direction")
+
 CRYPTO_NAMES = {
     "BTC": "Bitcoin",
     "ETH": "Ethereum",
@@ -396,11 +401,14 @@ class EventRadarService:
             numeric = {key: float(value) for key, value in probabilities.items()}
             if any(value < 0 or value > 1 for value in numeric.values()) or abs(sum(numeric.values()) - 1) > 0.001:
                 raise ValueError(f"invalid JEV {name} probabilities")
-            confidence = float(answer.get("confidence", numeric.get(choice, 0)))
-            if choice != max(numeric, key=numeric.get) or confidence < config["min_confidence"]:
+            if choice != max(numeric, key=numeric.get):
+                raise ValueError(f"invalid JEV {name} choice")
+            resolved[name] = (choice, self._jev_confidence(answer, numeric, choice))
+
+        for name in JEV_GATING_QUESTIONS:
+            if resolved[name][1] < config["min_confidence"]:
                 raise ValueError(f"JEV confidence below threshold for {name}")
-            resolved[name] = (choice, min(max(confidence, 0.0), 1.0))
-        confidence = min(value[1] for value in resolved.values())
+        confidence = min(resolved[name][1] for name in JEV_GATING_QUESTIONS)
         return {
             "direction": resolved["direction"][0],
             "confidence": confidence,
@@ -411,6 +419,19 @@ class EventRadarService:
             "provider": "jev",
             "model": config["model"],
         }
+
+    @staticmethod
+    def _jev_confidence(answer: dict[str, Any], probabilities: dict[str, float], choice: str) -> float:
+        def bounded(value: Any) -> float | None:
+            try:
+                return max(0.0, min(float(value), 1.0))
+            except (TypeError, ValueError):
+                return None
+
+        direct = bounded(answer.get("confidence"))
+        if direct is not None:
+            return direct
+        return bounded(probabilities.get(choice)) or 0.0
 
     def _analyze_llm(
         self,
@@ -498,7 +519,7 @@ class EventRadarService:
             sec_user_agent = f"SharkQuant Event Radar {contact_email}"
         return {
             "enabled": boolean("EVENT_RADAR_ENABLED", True),
-            "jev_min_confidence": min(max(numeric("EVENT_RADAR_JEV_MIN_CONFIDENCE", 0.65), 0.0), 1.0),
+            "jev_min_confidence": min(max(numeric("EVENT_RADAR_JEV_MIN_CONFIDENCE", 0.30), 0.0), 1.0),
             "news_lookback_days": min(max(int(numeric("EVENT_RADAR_NEWS_LOOKBACK_DAYS", 2)), 1), 30),
             "max_events": min(max(int(numeric("EVENT_RADAR_MAX_EVENTS", 8)), 1), 20),
             "crypto_rss_enabled": boolean("EVENT_RADAR_CRYPTO_RSS_ENABLED", True),

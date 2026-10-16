@@ -385,3 +385,93 @@ def test_event_radar_disabled_does_not_charge(monkeypatch):
     except module.EventRadarError as exc:
         assert exc.code == "event_radar_disabled"
         assert exc.status == 403
+
+
+class _FakeJevResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+def _jev_payload(relevance_confidence=0.9, direction_confidence=0.35):
+    """Four well-formed answers; only the confidence fields vary."""
+    return {
+        "answers": {
+            "relevance": {
+                "choice": "high",
+                "confidence": relevance_confidence,
+                "probabilities": {"high": 0.9, "medium": 0.09, "low": 0.01},
+            },
+            "direction": {
+                "choice": "mixed",
+                "confidence": direction_confidence,
+                "probabilities": {"bullish": 0.2, "bearish": 0.2, "neutral": 0.25, "mixed": 0.35},
+            },
+            "impact": {
+                "choice": "medium",
+                "confidence": 0.10,
+                "probabilities": {"high": 0.1, "medium": 0.6, "low": 0.3},
+            },
+            "freshness": {
+                "choice": "stale",
+                "confidence": 0.05,
+                "probabilities": {"fresh": 0.4, "mixed": 0.05, "stale": 0.55},
+            },
+        }
+    }
+
+
+def _jev_config(min_confidence=0.30):
+    return {
+        "api_key": "key",
+        "base_url": "https://api.typesafe.ai/v1",
+        "model": "jev-latest",
+        "timeout_seconds": 8,
+        "min_confidence": min_confidence,
+    }
+
+
+def test_jev_impact_and_freshness_are_informational_not_gating(monkeypatch):
+    """impact/freshness below the threshold must not discard an otherwise good read."""
+    service = module.EventRadarService()
+    monkeypatch.setattr(module.requests, "post", lambda *args, **kwargs: _FakeJevResponse(_jev_payload()))
+
+    result = service._analyze_jev("BTC/USDT", "crypto", [{"title": "t"}], _jev_config())
+
+    assert result["provider"] == "jev"
+    assert result["direction"] == "mixed"
+    assert result["impact"] == "medium"
+    assert result["freshness"] == "stale"
+    # Reported confidence is min(relevance, direction); impact=0.10 and freshness=0.05 are ignored.
+    assert result["confidence"] == 0.35
+
+
+def test_jev_low_direction_confidence_falls_back(monkeypatch):
+    service = module.EventRadarService()
+    monkeypatch.setattr(
+        module.requests, "post", lambda *args, **kwargs: _FakeJevResponse(_jev_payload(direction_confidence=0.25))
+    )
+
+    try:
+        service._analyze_jev("BTC/USDT", "crypto", [{"title": "t"}], _jev_config())
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        assert "below threshold for direction" in str(exc)
+
+
+def test_jev_low_relevance_confidence_falls_back(monkeypatch):
+    service = module.EventRadarService()
+    monkeypatch.setattr(
+        module.requests, "post", lambda *args, **kwargs: _FakeJevResponse(_jev_payload(relevance_confidence=0.2))
+    )
+
+    try:
+        service._analyze_jev("BTC/USDT", "crypto", [{"title": "t"}], _jev_config())
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        assert "below threshold for relevance" in str(exc)
