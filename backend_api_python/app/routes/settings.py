@@ -775,53 +775,56 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'ORDER_MODE',
-                'label': 'Order Execution Mode',
+                'label': 'settings.field.ORDER_MODE',
                 'type': 'select',
-                'options': ['market', 'maker'],
+                'options': [
+                    {'value': 'market', 'label': 'settings.option.ORDER_MODE.market'},
+                    {'value': 'maker', 'label': 'settings.option.ORDER_MODE.maker'},
+                ],
                 'default': 'market',
-                'description': 'market: Market order (instant fill, recommended), maker: Limit order first (lower fees but may not fill)'
+                'description': 'settings.desc.ORDER_MODE'
             },
             {
                 'key': 'MAKER_WAIT_SEC',
-                'label': 'Limit Order Wait (sec)',
+                'label': 'settings.field.MAKER_WAIT_SEC',
                 'type': 'number',
                 'default': '10',
-                'description': 'Wait time for limit order fill before switching to market order'
+                'description': 'settings.desc.MAKER_WAIT_SEC'
             },
             {
                 'key': 'SPOT_CLOSE_SAFETY_RATIO',
-                'label': 'Spot Close Safety Ratio',
+                'label': 'settings.field.SPOT_CLOSE_SAFETY_RATIO',
                 'type': 'number',
                 'default': '1.0',
-                'description': 'When closing spot long, sell qty is capped to (exchange free base × this ratio), then floored to lot step. Base-asset fees are already deducted from strategy inventory; lower only if a venue still rejects full closes (valid range 0.9–1.0).'
+                'description': 'settings.desc.SPOT_CLOSE_SAFETY_RATIO'
             },
             {
                 'key': 'SPOT_OPEN_QUOTE_BUFFER',
-                'label': 'Spot Open Quote Buffer',
+                'label': 'settings.field.SPOT_OPEN_QUOTE_BUFFER',
                 'type': 'number',
                 'default': '0.995',
-                'description': 'Fraction of USDT/notional used on spot open (reserve headroom for buy fees). Example 0.995 uses 99.5% of allocated quote (valid range 0.9–1.0).'
+                'description': 'settings.desc.SPOT_OPEN_QUOTE_BUFFER'
             },
             {
                 'key': 'ALLOW_LOCAL_DESKTOP_BROKERS',
-                'label': 'Allow IBKR (local desktop broker)',
+                'label': 'settings.field.ALLOW_LOCAL_DESKTOP_BROKERS',
                 'type': 'boolean',
                 'default': 'True',
-                'description': 'Disable on a multi-tenant SaaS deployment so users see a clear "broker not supported" message instead of broken connect flows. Crypto exchange API keys are unaffected.'
+                'description': 'settings.desc.ALLOW_LOCAL_DESKTOP_BROKERS'
             },
             {
                 'key': 'ENABLE_PENDING_ORDER_WORKER',
-                'label': 'Enable Pending Order Worker',
+                'label': 'settings.field.ENABLE_PENDING_ORDER_WORKER',
                 'type': 'boolean',
                 'default': 'True',
-                'description': 'Background worker that syncs broker positions, manages pending limit orders, and triggers strategy auto-stop on fatal errors. Disable only when running multiple API replicas where another node already runs the worker.'
+                'description': 'settings.desc.ENABLE_PENDING_ORDER_WORKER'
             },
             {
                 'key': 'DISABLE_RESTORE_RUNNING_STRATEGIES',
-                'label': 'Disable Auto-Restore Strategies on Boot',
+                'label': 'settings.field.DISABLE_RESTORE_RUNNING_STRATEGIES',
                 'type': 'boolean',
                 'default': 'False',
-                'description': 'When False, strategies running before a server restart are automatically resumed. Set to True only if you want to inspect state on next boot before any strategy resumes trading.'
+                'description': 'settings.desc.DISABLE_RESTORE_RUNNING_STRATEGIES'
             },
         ]
     },
@@ -883,11 +886,11 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'ENABLED_MARKETS',
-                'label': 'Enabled Markets',
+                'label': 'settings.field.ENABLED_MARKETS',
                 'type': 'market_multiselect',
                 'default': '',
                 'options': market_options(),
-                'description': 'Markets exposed to research, strategy, market data, Agent API, and live-trading entry points. Saved as ENABLED_MARKETS in .env for backward compatibility. Empty = whitelist disabled and legacy SHOW_* flags apply.'
+                'description': 'settings.desc.ENABLED_MARKETS'
             },
         ]
     },
@@ -1142,159 +1145,168 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'SEARCH_PROVIDER',
-                'label': 'Search Provider',
+                'label': 'settings.field.SEARCH_PROVIDER',
                 'type': 'select',
-                'options': ['tavily', 'searxng', 'gdelt', 'serpapi', 'google', 'bing', 'duckduckgo', 'none'],
+                'options': [
+                    {'value': 'tavily', 'label': 'settings.option.SEARCH_PROVIDER.tavily'},
+                    {'value': 'searxng', 'label': 'settings.option.SEARCH_PROVIDER.searxng'},
+                    {'value': 'gdelt', 'label': 'settings.option.SEARCH_PROVIDER.gdelt'},
+                    {'value': 'serpapi', 'label': 'settings.option.SEARCH_PROVIDER.serpapi'},
+                    {'value': 'google', 'label': 'settings.option.SEARCH_PROVIDER.google'},
+                    {'value': 'bing', 'label': 'settings.option.SEARCH_PROVIDER.bing'},
+                    {'value': 'duckduckgo', 'label': 'settings.option.SEARCH_PROVIDER.duckduckgo'},
+                    {'value': 'none', 'label': 'settings.option.SEARCH_PROVIDER.none'},
+                ],
                 'default': 'tavily',
-                'description': 'Primary news/web search provider used by AI analysis. QuantDinger falls back to configured providers, then GDELT and DuckDuckGo when available'
+                'description': 'settings.desc.SEARCH_PROVIDER'
             },
             {
                 'key': 'SEARCH_MAX_RESULTS',
-                'label': 'Search Max Results',
+                'label': 'settings.field.SEARCH_MAX_RESULTS',
                 'type': 'number',
                 'default': '10',
-                'description': 'Maximum number of search/news results returned per AI analysis request'
+                'description': 'settings.desc.SEARCH_MAX_RESULTS'
             },
             {
                 'key': 'TAVILY_API_KEYS',
-                'label': 'Tavily API Keys',
+                'label': 'settings.field.TAVILY_API_KEYS',
                 'type': 'password',
                 'required': False,
                 'link': 'https://tavily.com/',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'Tavily search API keys (comma-separated). Recommended lightweight search source for AI analysis'
+                'description': 'settings.desc.TAVILY_API_KEYS'
             },
             {
                 'key': 'SEARCH_SEARXNG_BASE_URL',
-                'label': 'SearXNG Base URL',
+                'label': 'settings.field.SEARCH_SEARXNG_BASE_URL',
                 'type': 'text',
                 'required': False,
                 'default': '',
                 'link': 'https://docs.searxng.org/',
                 'link_text': 'settings.link.viewDocs',
-                'description': 'Base URL of a trusted or self-hosted SearXNG instance, for example https://search.example.com'
+                'description': 'settings.desc.SEARCH_SEARXNG_BASE_URL'
             },
             {
                 'key': 'GDELT_BASE_URL',
-                'label': 'GDELT DOC Base URL',
+                'label': 'settings.field.GDELT_BASE_URL',
                 'type': 'text',
                 'default': 'https://api.gdeltproject.org/api/v2/doc/doc',
                 'link': 'https://api.gdeltproject.org/api/v2/doc/doc',
                 'link_text': 'settings.link.viewDocs',
-                'description': 'Free global news fallback endpoint. GDELT requires no API key and is used when paid search sources are unavailable.'
+                'description': 'settings.desc.GDELT_BASE_URL'
             },
             {
                 'key': 'SERPAPI_KEYS',
-                'label': 'SerpAPI Keys',
+                'label': 'settings.field.SERPAPI_KEYS',
                 'type': 'password',
                 'required': False,
                 'link': 'https://serpapi.com/',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'SerpAPI keys (comma-separated)'
+                'description': 'settings.desc.SERPAPI_KEYS'
             },
             {
                 'key': 'SEARCH_GOOGLE_API_KEY',
-                'label': 'Google Search API Key',
+                'label': 'settings.field.SEARCH_GOOGLE_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://console.cloud.google.com/apis/credentials',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'Google Custom Search JSON API key'
+                'description': 'settings.desc.SEARCH_GOOGLE_API_KEY'
             },
             {
                 'key': 'SEARCH_GOOGLE_CX',
-                'label': 'Google Search Engine ID (CX)',
+                'label': 'settings.field.SEARCH_GOOGLE_CX',
                 'type': 'text',
                 'required': False,
                 'link': 'https://programmablesearchengine.google.com/',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'Google Programmable Search Engine ID'
+                'description': 'settings.desc.SEARCH_GOOGLE_CX'
             },
             {
                 'key': 'SEARCH_BING_API_KEY',
-                'label': 'Bing Search API Key',
+                'label': 'settings.field.SEARCH_BING_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://portal.azure.com/',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'Microsoft Bing Web Search API key'
+                'description': 'settings.desc.SEARCH_BING_API_KEY'
             },
             {
                 'key': 'SEARCH_SEARXNG_ENGINES',
-                'label': 'SearXNG Engines',
+                'label': 'settings.field.SEARCH_SEARXNG_ENGINES',
                 'type': 'text',
                 'required': False,
                 'default': '',
-                'description': 'Optional comma-separated SearXNG engines. Leave empty to use the instance defaults.'
+                'description': 'settings.desc.SEARCH_SEARXNG_ENGINES'
             },
             {
                 'key': 'SEARCH_SEARXNG_CATEGORIES',
-                'label': 'SearXNG Categories',
+                'label': 'settings.field.SEARCH_SEARXNG_CATEGORIES',
                 'type': 'text',
                 'required': False,
                 'default': 'general',
-                'description': 'Comma-separated SearXNG categories used for AI research search.'
+                'description': 'settings.desc.SEARCH_SEARXNG_CATEGORIES'
             },
             {
                 'key': 'SEARCH_SEARXNG_LANGUAGE',
-                'label': 'SearXNG Language',
+                'label': 'settings.field.SEARCH_SEARXNG_LANGUAGE',
                 'type': 'text',
                 'required': False,
                 'default': 'auto',
-                'description': 'SearXNG language code. Use auto to keep the instance default.'
+                'description': 'settings.desc.SEARCH_SEARXNG_LANGUAGE'
             },
             {
                 'key': 'SEARCH_SEARXNG_TIMEOUT',
-                'label': 'SearXNG Timeout (sec)',
+                'label': 'settings.field.SEARCH_SEARXNG_TIMEOUT',
                 'type': 'number',
                 'default': '12',
-                'description': 'Timeout for SearXNG search requests.'
+                'description': 'settings.desc.SEARCH_SEARXNG_TIMEOUT'
             },
             {
                 'key': 'GDELT_TIMEOUT',
-                'label': 'GDELT Timeout (sec)',
+                'label': 'settings.field.GDELT_TIMEOUT',
                 'type': 'number',
                 'default': '12',
-                'description': 'Timeout for GDELT DOC 2.0 global news queries.'
+                'description': 'settings.desc.GDELT_TIMEOUT'
             },
             {
                 'key': 'GDELT_MAX_RESULTS',
-                'label': 'GDELT Max Results',
+                'label': 'settings.field.GDELT_MAX_RESULTS',
                 'type': 'number',
                 'default': '10',
-                'description': 'Default maximum GDELT article count used by fallback news/event search.'
+                'description': 'settings.desc.GDELT_MAX_RESULTS'
             },
             {
                 'key': 'ALPHA_VANTAGE_API_KEY',
-                'label': 'Alpha Vantage API Key',
+                'label': 'settings.field.ALPHA_VANTAGE_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://www.alphavantage.co/support/#api-key',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'Optional low-cost company news and sentiment source using Alpha Vantage NEWS_SENTIMENT.'
+                'description': 'settings.desc.ALPHA_VANTAGE_API_KEY'
             },
             {
                 'key': 'ALPHA_VANTAGE_BASE_URL',
-                'label': 'Alpha Vantage Base URL',
+                'label': 'settings.field.ALPHA_VANTAGE_BASE_URL',
                 'type': 'text',
                 'default': 'https://www.alphavantage.co/query',
                 'link': 'https://www.alphavantage.co/documentation/',
                 'link_text': 'settings.link.viewDocs',
-                'description': 'Alpha Vantage API endpoint for NEWS_SENTIMENT and related market-data functions.'
+                'description': 'settings.desc.ALPHA_VANTAGE_BASE_URL'
             },
             {
                 'key': 'ALPHA_VANTAGE_TIMEOUT',
-                'label': 'Alpha Vantage Timeout (sec)',
+                'label': 'settings.field.ALPHA_VANTAGE_TIMEOUT',
                 'type': 'number',
                 'default': '12',
-                'description': 'Timeout for Alpha Vantage company news and sentiment requests.'
+                'description': 'settings.desc.ALPHA_VANTAGE_TIMEOUT'
             },
             {
                 'key': 'ALPHA_VANTAGE_NEWS_LIMIT',
-                'label': 'Alpha Vantage News Limit',
+                'label': 'settings.field.ALPHA_VANTAGE_NEWS_LIMIT',
                 'type': 'number',
                 'default': '20',
-                'description': 'Maximum NEWS_SENTIMENT feed items requested per company-news lookup.'
+                'description': 'settings.desc.ALPHA_VANTAGE_NEWS_LIMIT'
             },
         ]
     },
@@ -1396,99 +1408,99 @@ CONFIG_SCHEMA = {
             # Agent Gateway (/api/agent/v1) deployment knobs
             {
                 'key': 'AGENT_LIVE_TRADING_ENABLED',
-                'label': 'Agent Live Trading',
+                'label': 'settings.field.AGENT_LIVE_TRADING_ENABLED',
                 'type': 'boolean',
                 'default': 'False',
-                'description': 'Hard kill switch for live trading from agent tokens. When False, T-class agent calls always record paper orders even if the token allows live mode.'
+                'description': 'settings.desc.AGENT_LIVE_TRADING_ENABLED'
             },
             {
                 'key': 'QUANTDINGER_DEPLOYMENT_MODE',
-                'label': 'Deployment Mode',
+                'label': 'settings.field.QUANTDINGER_DEPLOYMENT_MODE',
                 'type': 'select',
                 'options': [
-                    {'value': '', 'label': 'Single-tenant / self-hosted'},
-                    {'value': 'saas', 'label': 'SaaS / hosted (multi-tenant)'},
-                    {'value': 'hosted', 'label': 'Hosted (alias of saas)'},
+                    {'value': '', 'label': 'settings.option.QUANTDINGER_DEPLOYMENT_MODE.selfHosted'},
+                    {'value': 'saas', 'label': 'settings.option.QUANTDINGER_DEPLOYMENT_MODE.saas'},
+                    {'value': 'hosted', 'label': 'settings.option.QUANTDINGER_DEPLOYMENT_MODE.hosted'},
                 ],
                 'default': '',
-                'description': 'Set to "saas" on multi-tenant hosted instances. Users self-manage Agent Tokens in Profile; T scope is allowed with in-app risk disclosure. Live trading still requires AGENT_LIVE_TRADING_ENABLED.'
+                'description': 'settings.desc.QUANTDINGER_DEPLOYMENT_MODE'
             },
             {
                 'key': 'AGENT_JOBS_MAX_WORKERS',
-                'label': 'Agent Jobs Max Workers',
+                'label': 'settings.field.AGENT_JOBS_MAX_WORKERS',
                 'type': 'number',
                 'default': '4',
-                'description': 'Thread pool size for async agent jobs (backtests, experiment pipelines).'
+                'description': 'settings.desc.AGENT_JOBS_MAX_WORKERS'
             },
             {
                 'key': 'ENABLE_REFLECTION_WORKER',
-                'label': 'Enable Auto Reflection',
+                'label': 'settings.field.ENABLE_REFLECTION_WORKER',
                 'type': 'boolean',
                 'default': 'False',
-                'description': 'Enable background worker for automatic trade reflection and calibration'
+                'description': 'settings.desc.ENABLE_REFLECTION_WORKER'
             },
             {
                 'key': 'REFLECTION_WORKER_INTERVAL_SEC',
-                'label': 'Reflection Interval (sec)',
+                'label': 'settings.field.REFLECTION_WORKER_INTERVAL_SEC',
                 'type': 'number',
                 'default': '86400',
-                'description': 'Reflection worker run interval in seconds (86400 = 1 day)'
+                'description': 'settings.desc.REFLECTION_WORKER_INTERVAL_SEC'
             },
             {
                 'key': 'REFLECTION_MIN_AGE_DAYS',
-                'label': 'Min Age for Validation (days)',
+                'label': 'settings.field.REFLECTION_MIN_AGE_DAYS',
                 'type': 'number',
                 'default': '7',
-                'description': 'Only validate analyses older than N days'
+                'description': 'settings.desc.REFLECTION_MIN_AGE_DAYS'
             },
             {
                 'key': 'REFLECTION_VALIDATE_LIMIT',
-                'label': 'Validation Batch Limit',
+                'label': 'settings.field.REFLECTION_VALIDATE_LIMIT',
                 'type': 'number',
                 'default': '200',
-                'description': 'Max records to validate per reflection cycle'
+                'description': 'settings.desc.REFLECTION_VALIDATE_LIMIT'
             },
             {
                 'key': 'ENABLE_CONFIDENCE_CALIBRATION',
-                'label': 'Enable Confidence Calibration',
+                'label': 'settings.field.ENABLE_CONFIDENCE_CALIBRATION',
                 'type': 'boolean',
                 'default': 'False',
-                'description': 'Adjust confidence by historical accuracy in each bucket'
+                'description': 'settings.desc.ENABLE_CONFIDENCE_CALIBRATION'
             },
             {
                 'key': 'ENABLE_AI_ENSEMBLE',
-                'label': 'Enable Multi-Model Voting',
+                'label': 'settings.field.ENABLE_AI_ENSEMBLE',
                 'type': 'boolean',
                 'default': 'False',
-                'description': 'Use 2-3 models and majority vote for more stable decisions'
+                'description': 'settings.desc.ENABLE_AI_ENSEMBLE'
             },
             {
                 'key': 'AI_ENSEMBLE_MODELS',
-                'label': 'Ensemble Models',
+                'label': 'settings.field.AI_ENSEMBLE_MODELS',
                 'type': 'text',
                 'default': 'openai/gpt-5.4,openai/gpt-4o-mini',
-                'description': 'Comma-separated model IDs for ensemble voting'
+                'description': 'settings.desc.AI_ENSEMBLE_MODELS'
             },
             {
                 'key': 'AI_CALIBRATION_MARKETS',
-                'label': 'Calibration Markets',
+                'label': 'settings.field.AI_CALIBRATION_MARKETS',
                 'type': 'text',
                 'default': 'Crypto',
-                'description': 'Comma-separated markets to run threshold calibration'
+                'description': 'settings.desc.AI_CALIBRATION_MARKETS'
             },
             {
                 'key': 'AI_CALIBRATION_LOOKBACK_DAYS',
-                'label': 'Calibration Lookback (days)',
+                'label': 'settings.field.AI_CALIBRATION_LOOKBACK_DAYS',
                 'type': 'number',
                 'default': '30',
-                'description': 'Days of validated data for calibration'
+                'description': 'settings.desc.AI_CALIBRATION_LOOKBACK_DAYS'
             },
             {
                 'key': 'AI_CALIBRATION_MIN_SAMPLES',
-                'label': 'Calibration Min Samples',
+                'label': 'settings.field.AI_CALIBRATION_MIN_SAMPLES',
                 'type': 'number',
                 'default': '80',
-                'description': 'Minimum validated samples required for calibration'
+                'description': 'settings.desc.AI_CALIBRATION_MIN_SAMPLES'
             },
         ]
     },
@@ -1500,10 +1512,10 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'PROXY_URL',
-                'label': 'Proxy URL',
+                'label': 'settings.field.PROXY_URL',
                 'type': 'text',
                 'required': False,
-                'description': 'Proxy URL for market data, exchange and broker APIs. LLM provider calls are direct by default; use LLM Proxy URL only when an LLM provider must go through a proxy.'
+                'description': 'settings.desc.PROXY_URL'
             },
         ]
     },
