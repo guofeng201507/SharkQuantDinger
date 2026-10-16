@@ -899,238 +899,238 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'PROFESSIONAL_REPORT_DATA_TIER',
-                'label': 'Professional Report Data Tier',
+                'label': 'settings.field.PROFESSIONAL_REPORT_DATA_TIER',
                 'type': 'select',
                 'default': 'community',
                 'options': [
-                    {'value': 'community', 'label': 'Community / low-cost'},
-                    {'value': 'professional', 'label': 'Professional'},
+                    {'value': 'community', 'label': 'settings.option.PROFESSIONAL_REPORT_DATA_TIER.community'},
+                    {'value': 'professional', 'label': 'settings.option.PROFESSIONAL_REPORT_DATA_TIER.professional'},
                 ],
-                'description': 'Select the source tier declared in professional reports. Community remains the safe default and still uses every configured active fallback.'
+                'description': 'settings.desc.PROFESSIONAL_REPORT_DATA_TIER',
             },
             {
                 'key': 'PROFESSIONAL_REPORT_RISK_BUDGET_PCT',
-                'label': 'Risk Budget per Trade (%)',
+                'label': 'settings.field.PROFESSIONAL_REPORT_RISK_BUDGET_PCT',
                 'type': 'number',
                 'default': '1.0',
-                'description': 'Account risk budget used to calculate the report position-size ceiling. This is not the target position percentage.'
+                'description': 'settings.desc.PROFESSIONAL_REPORT_RISK_BUDGET_PCT',
             },
             {
                 'key': 'FAST_ANALYSIS_INCLUDE_GLOBAL_NEWS',
-                'label': 'Include Broad Global Headlines',
+                'label': 'settings.field.FAST_ANALYSIS_INCLUDE_GLOBAL_NEWS',
                 'type': 'boolean',
                 'default': 'False',
-                'description': 'Add broad global-event headlines to each asset report. Keep disabled unless this background context is explicitly needed.'
+                'description': 'settings.desc.FAST_ANALYSIS_INCLUDE_GLOBAL_NEWS',
             },
             {
                 'key': 'CRYPTO_PUBLIC_DEFAULT_EXCHANGE',
-                'label': 'Default Crypto Exchange',
+                'label': 'settings.field.CRYPTO_PUBLIC_DEFAULT_EXCHANGE',
                 'type': 'text',
                 'default': 'binance',
-                'description': 'Default crypto market-data exchange: binance, bitget, bybit, okx, gate, or htx'
+                'description': 'settings.desc.CRYPTO_PUBLIC_DEFAULT_EXCHANGE',
             },
             {
                 'key': 'FINNHUB_API_KEY',
-                'label': 'Finnhub API Key',
+                'label': 'settings.field.FINNHUB_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://finnhub.io/register',
                 'link_text': 'settings.link.freeRegister',
-                'description': 'Optional Finnhub API key for US stock quotes, company profile and news. Paid-only endpoints such as Economic Calendar are skipped by default.'
+                'description': 'settings.desc.FINNHUB_API_KEY',
             },
             {
                 'key': 'FINNHUB_FREE_ONLY',
-                'label': 'Finnhub Free-only Mode',
+                'label': 'settings.field.FINNHUB_FREE_ONLY',
                 'type': 'boolean',
                 'default': 'True',
-                'description': 'Keep enabled for free Finnhub plans. When enabled, paid-only Finnhub endpoints such as Economic Calendar and Social Sentiment are not called.'
+                'description': 'settings.desc.FINNHUB_FREE_ONLY',
             },
             {
                 'key': 'TRADING_ECONOMICS_CLIENT',
-                'label': 'Trading Economics Client',
+                'label': 'settings.field.TRADING_ECONOMICS_CLIENT',
                 'type': 'text',
                 'default': '',
                 'required': False,
                 'link': 'https://docs.tradingeconomics.com/',
                 'link_text': 'settings.link.viewDocs',
-                'description': 'Optional official international economic calendar provider. Leave empty to use the free AkShare/WallstreetCN fallback; enter your TE client name if you have a Trading Economics API key.'
+                'description': 'settings.desc.TRADING_ECONOMICS_CLIENT',
             },
             {
                 'key': 'TRADING_ECONOMICS_KEY',
-                'label': 'Trading Economics Key',
+                'label': 'settings.field.TRADING_ECONOMICS_KEY',
                 'type': 'password',
                 'default': '',
                 'required': False,
                 'link': 'https://docs.tradingeconomics.com/',
                 'link_text': 'settings.link.viewDocs',
-                'description': 'Optional Trading Economics API key. The legacy guest account is discontinued; leave blank unless you have credentials.'
+                'description': 'settings.desc.TRADING_ECONOMICS_KEY',
             },
             {
                 'key': 'TRADING_ECONOMICS_BASE_URL',
-                'label': 'Trading Economics Base URL',
+                'label': 'settings.field.TRADING_ECONOMICS_BASE_URL',
                 'type': 'text',
                 'default': 'https://api.tradingeconomics.com',
-                'description': 'Trading Economics API endpoint. Change only if you use a proxy or mirror.'
+                'description': 'settings.desc.TRADING_ECONOMICS_BASE_URL',
             },
             {
                 'key': 'TRADING_ECONOMICS_TIMEOUT',
-                'label': 'Trading Economics Timeout (sec)',
+                'label': 'settings.field.TRADING_ECONOMICS_TIMEOUT',
                 'type': 'number',
                 'default': '10',
-                'description': 'Timeout for economic calendar requests.'
+                'description': 'settings.desc.TRADING_ECONOMICS_TIMEOUT',
             },
             {
                 'key': 'FRED_API_KEY',
-                'label': 'FRED API Key',
+                'label': 'settings.field.FRED_API_KEY',
                 'type': 'password',
                 'default': '',
                 'required': False,
                 'link': 'https://fred.stlouisfed.org/docs/api/api_key.html',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'FRED key for stable US macro time series such as rates, CPI, unemployment, payrolls and financial conditions.'
+                'description': 'settings.desc.FRED_API_KEY',
             },
             {
                 'key': 'FRED_BASE_URL',
-                'label': 'FRED Base URL',
+                'label': 'settings.field.FRED_BASE_URL',
                 'type': 'text',
                 'default': 'https://api.stlouisfed.org/fred',
                 'link': 'https://fred.stlouisfed.org/docs/api/fred/',
                 'link_text': 'settings.link.viewDocs',
-                'description': 'FRED API endpoint. Change only when using a proxy.'
+                'description': 'settings.desc.FRED_BASE_URL',
             },
             {
                 'key': 'FRED_TIMEOUT',
-                'label': 'FRED Timeout (sec)',
+                'label': 'settings.field.FRED_TIMEOUT',
                 'type': 'number',
                 'default': '10',
-                'description': 'Timeout for FRED macro time-series requests.'
+                'description': 'settings.desc.FRED_TIMEOUT',
             },
             {
                 'key': 'BLS_API_KEY',
-                'label': 'BLS API Key',
+                'label': 'settings.field.BLS_API_KEY',
                 'type': 'password',
                 'default': '',
                 'required': False,
                 'link': 'https://www.bls.gov/developers/',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'Optional BLS registration key for higher official CPI, jobs, wages and labor data limits.'
+                'description': 'settings.desc.BLS_API_KEY',
             },
             {
                 'key': 'BLS_BASE_URL',
-                'label': 'BLS Base URL',
+                'label': 'settings.field.BLS_BASE_URL',
                 'type': 'text',
                 'default': 'https://api.bls.gov/publicAPI/v2',
                 'link': 'https://www.bls.gov/developers/',
                 'link_text': 'settings.link.viewDocs',
-                'description': 'BLS public API endpoint. A key is optional but recommended.'
+                'description': 'settings.desc.BLS_BASE_URL',
             },
             {
                 'key': 'BLS_TIMEOUT',
-                'label': 'BLS Timeout (sec)',
+                'label': 'settings.field.BLS_TIMEOUT',
                 'type': 'number',
                 'default': '10',
-                'description': 'Timeout for BLS official macro series requests.'
+                'description': 'settings.desc.BLS_TIMEOUT',
             },
             {
                 'key': 'BEA_API_KEY',
-                'label': 'BEA API Key',
+                'label': 'settings.field.BEA_API_KEY',
                 'type': 'password',
                 'default': '',
                 'required': False,
                 'link': 'https://apps.bea.gov/API/signup/',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'BEA key for official GDP, income, consumption and national accounts data.'
+                'description': 'settings.desc.BEA_API_KEY',
             },
             {
                 'key': 'BEA_BASE_URL',
-                'label': 'BEA Base URL',
+                'label': 'settings.field.BEA_BASE_URL',
                 'type': 'text',
                 'default': 'https://apps.bea.gov/api/data',
                 'link': 'https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf',
                 'link_text': 'settings.link.viewDocs',
-                'description': 'BEA API endpoint. Change only when using a proxy.'
+                'description': 'settings.desc.BEA_BASE_URL',
             },
             {
                 'key': 'BEA_TIMEOUT',
-                'label': 'BEA Timeout (sec)',
+                'label': 'settings.field.BEA_TIMEOUT',
                 'type': 'number',
                 'default': '10',
-                'description': 'Timeout for BEA official macro data requests.'
+                'description': 'settings.desc.BEA_TIMEOUT',
             },
             {
                 'key': 'COINGLASS_API_KEY',
-                'label': 'Coinglass API Key',
+                'label': 'settings.field.COINGLASS_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://docs.coinglass.com/reference/getting-started-with-your-api',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'Coinglass API key for crypto derivatives, funding rate, long/short ratio, and exchange flow data. Open the official docs to view signup and key management instructions.'
+                'description': 'settings.desc.COINGLASS_API_KEY',
             },
             {
                 'key': 'CRYPTOQUANT_API_KEY',
-                'label': 'CryptoQuant API Key',
+                'label': 'settings.field.CRYPTOQUANT_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://cryptoquant.com/docs',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'CryptoQuant API key for on-chain and stablecoin flow metrics used in crypto AI analysis. API access is tied to paid plans; see the official docs for activation details.'
+                'description': 'settings.desc.CRYPTOQUANT_API_KEY',
             },
             {
                 'key': 'TIINGO_API_KEY',
-                'label': 'Tiingo API Key',
+                'label': 'settings.field.TIINGO_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://www.tiingo.com/account/api/token',
                 'link_text': 'settings.link.getToken',
-                'description': 'Tiingo API key for Forex/Metals data'
+                'description': 'settings.desc.TIINGO_API_KEY',
             },
             {
                 'key': 'TWELVE_DATA_API_KEY',
-                'label': 'Twelve Data API Key',
+                'label': 'settings.field.TWELVE_DATA_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://twelvedata.com/apikey',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'Twelve Data API key for CN/HK stock K-lines (free 800 credits/day)'
+                'description': 'settings.desc.TWELVE_DATA_API_KEY',
             },
             {
                 'key': 'ADANOS_API_KEY',
-                'label': 'Adanos API Key',
+                'label': 'settings.field.ADANOS_API_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://adanos.org',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'Adanos market sentiment API key. Leave empty to disable the US-stock sentiment widget.'
+                'description': 'settings.desc.ADANOS_API_KEY',
             },
             {
                 'key': 'ADANOS_SENTIMENT_SOURCE',
-                'label': 'Adanos Sentiment Source',
+                'label': 'settings.field.ADANOS_SENTIMENT_SOURCE',
                 'type': 'text',
                 'default': 'reddit',
-                'description': 'Sentiment source channel (reddit, etc.). See Adanos docs for valid values.'
+                'description': 'settings.desc.ADANOS_SENTIMENT_SOURCE',
             },
             {
                 'key': 'ADANOS_API_BASE_URL',
-                'label': 'Adanos API Base URL',
+                'label': 'settings.field.ADANOS_API_BASE_URL',
                 'type': 'text',
                 'default': 'https://api.adanos.org',
-                'description': 'Adanos API endpoint. Change only if you have a self-hosted or mirrored instance.'
+                'description': 'settings.desc.ADANOS_API_BASE_URL',
             },
             {
                 'key': 'TWITTERAPI_IO_KEY',
-                'label': 'twitterapi.io API Key',
+                'label': 'settings.field.TWITTERAPI_IO_KEY',
                 'type': 'password',
                 'required': False,
                 'link': 'https://twitterapi.io',
                 'link_text': 'settings.link.getApiKey',
-                'description': 'twitterapi.io key. When set, AI analysis adds a digest of recent X (Twitter) posts for the instrument. Leave empty to disable.'
+                'description': 'settings.desc.TWITTERAPI_IO_KEY',
             },
             {
                 'key': 'TWITTERAPI_IO_BASE_URL',
-                'label': 'twitterapi.io API Base URL',
+                'label': 'settings.field.TWITTERAPI_IO_BASE_URL',
                 'type': 'text',
                 'default': 'https://api.twitterapi.io',
-                'description': 'twitterapi.io API endpoint. Change only if you have a mirrored instance.'
+                'description': 'settings.desc.TWITTERAPI_IO_BASE_URL',
             },
         ]
     },
@@ -1720,10 +1720,10 @@ CONFIG_SCHEMA = {
         'items': [
             {
                 'key': 'BILLING_ENABLED',
-                'label': 'Enable Billing',
+                'label': 'settings.field.BILLING_ENABLED',
                 'type': 'boolean',
                 'default': 'False',
-                'description': 'Enable billing system. Users need credits to use certain features'
+                'description': 'settings.desc.BILLING_ENABLED',
             },
 
             # ===== USDT Pay (v3.0.6+: one fixed address per chain + amount-suffix matching) =====
@@ -1734,171 +1734,171 @@ CONFIG_SCHEMA = {
             # derivation or batched consolidation.
             {
                 'key': 'USDT_PAY_ENABLED',
-                'label': 'Enable USDT Pay',
+                'label': 'settings.field.USDT_PAY_ENABLED',
                 'type': 'boolean',
                 'default': 'False',
-                'description': 'Master switch for USDT scan-to-pay checkout (multi-chain, single address + amount-suffix matching).'
+                'description': 'settings.desc.USDT_PAY_ENABLED',
             },
             {
                 'key': 'USDT_PAY_ENABLED_CHAINS',
-                'label': 'Enabled Chains',
+                'label': 'settings.field.USDT_PAY_ENABLED_CHAINS',
                 'type': 'text',
                 'default': 'TRC20,BEP20,ERC20,SOL',
-                'description': 'Comma-separated chain whitelist. Any code not in this list is rejected at order creation. Valid codes: TRC20 / BEP20 / ERC20 / SOL.'
+                'description': 'settings.desc.USDT_PAY_ENABLED_CHAINS',
             },
             {
                 'key': 'USDT_TRC20_ADDRESS',
-                'label': 'TRC20 Receiving Address',
+                'label': 'settings.field.USDT_TRC20_ADDRESS',
                 'type': 'text',
                 'required': False,
-                'description': 'Your TRON wallet address (starts with T...). Leave blank to hide TRC20 from the chain picker.'
+                'description': 'settings.desc.USDT_TRC20_ADDRESS',
             },
             {
                 'key': 'USDT_BEP20_ADDRESS',
-                'label': 'BEP20 Receiving Address',
+                'label': 'settings.field.USDT_BEP20_ADDRESS',
                 'type': 'text',
                 'required': False,
-                'description': 'Your BSC wallet address (0x...). Reconciliation uses public BSC RPC by default; for production, configure BSC_RPC_URLS with your own reliable RPC endpoint.'
+                'description': 'settings.desc.USDT_BEP20_ADDRESS',
             },
             {
                 'key': 'USDT_ERC20_ADDRESS',
-                'label': 'ERC20 Receiving Address',
+                'label': 'settings.field.USDT_ERC20_ADDRESS',
                 'type': 'text',
                 'required': False,
-                'description': 'Your Ethereum wallet address (0x...). Reconciliation prefers Etherscan V2 (free plan covers ETH), with public Ethereum RPC fallback.'
+                'description': 'settings.desc.USDT_ERC20_ADDRESS',
             },
             {
                 'key': 'USDT_SOL_ADDRESS',
-                'label': 'Solana Receiving Address',
+                'label': 'settings.field.USDT_SOL_ADDRESS',
                 'type': 'text',
                 'required': False,
-                'description': 'Your Solana wallet address (base58). The SPL USDT mint ATA is derived on-chain by the sender wallet.'
+                'description': 'settings.desc.USDT_SOL_ADDRESS',
             },
             {
                 'key': 'USDT_TRC20_CONTRACT',
-                'label': 'USDT TRC20 Contract',
+                'label': 'settings.field.USDT_TRC20_CONTRACT',
                 'type': 'text',
                 'default': 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
                 'required': False,
-                'description': 'Advanced: USDT token contract on TRON. Keep the default unless the network changes.'
+                'description': 'settings.desc.USDT_TRC20_CONTRACT',
             },
             {
                 'key': 'USDT_BEP20_CONTRACT',
-                'label': 'USDT BEP20 Contract',
+                'label': 'settings.field.USDT_BEP20_CONTRACT',
                 'type': 'text',
                 'default': '0x55d398326f99059fF775485246999027B3197955',
                 'required': False,
-                'description': 'Advanced: USDT token contract on BSC.'
+                'description': 'settings.desc.USDT_BEP20_CONTRACT',
             },
             {
                 'key': 'USDT_ERC20_CONTRACT',
-                'label': 'USDT ERC20 Contract',
+                'label': 'settings.field.USDT_ERC20_CONTRACT',
                 'type': 'text',
                 'default': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
                 'required': False,
-                'description': 'Advanced: USDT token contract on Ethereum.'
+                'description': 'settings.desc.USDT_ERC20_CONTRACT',
             },
             {
                 'key': 'USDT_SOL_MINT',
-                'label': 'USDT Solana Mint',
+                'label': 'settings.field.USDT_SOL_MINT',
                 'type': 'text',
                 'default': 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
                 'required': False,
-                'description': 'Advanced: SPL USDT mint on Solana.'
+                'description': 'settings.desc.USDT_SOL_MINT',
             },
             {
                 'key': 'USDC_PAY_ENABLED',
-                'label': 'Enable USDC Pay',
+                'label': 'settings.field.USDC_PAY_ENABLED',
                 'type': 'boolean',
                 'default': 'False',
-                'description': 'Enable Circle-issued native USDC checkout on Ethereum and Solana.'
+                'description': 'settings.desc.USDC_PAY_ENABLED',
             },
             {
                 'key': 'USDC_PAY_ENABLED_CHAINS',
-                'label': 'USDC Enabled Chains',
+                'label': 'settings.field.USDC_PAY_ENABLED_CHAINS',
                 'type': 'text',
                 'default': 'ERC20,SOL',
-                'description': 'Comma-separated official USDC chain whitelist: ERC20 / SOL.'
+                'description': 'settings.desc.USDC_PAY_ENABLED_CHAINS',
             },
             {
                 'key': 'USDC_ERC20_ADDRESS',
-                'label': 'USDC ERC20 Receiving Address',
+                'label': 'settings.field.USDC_ERC20_ADDRESS',
                 'type': 'text',
                 'required': False,
-                'description': 'Optional dedicated USDC address. Leave blank to reuse the USDT ERC20 receiving address.'
+                'description': 'settings.desc.USDC_ERC20_ADDRESS',
             },
             {
                 'key': 'USDC_SOL_ADDRESS',
-                'label': 'USDC Solana Receiving Address',
+                'label': 'settings.field.USDC_SOL_ADDRESS',
                 'type': 'text',
                 'required': False,
-                'description': 'Optional dedicated USDC address. Leave blank to reuse the USDT Solana receiving address.'
+                'description': 'settings.desc.USDC_SOL_ADDRESS',
             },
             {
                 'key': 'USDC_ERC20_CONTRACT',
-                'label': 'USDC ERC20 Contract',
+                'label': 'settings.field.USDC_ERC20_CONTRACT',
                 'type': 'text',
                 'default': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
                 'required': False,
-                'description': 'Advanced: USDC token contract on Ethereum.'
+                'description': 'settings.desc.USDC_ERC20_CONTRACT',
             },
             {
                 'key': 'USDC_SOL_MINT',
-                'label': 'USDC Solana Mint',
+                'label': 'settings.field.USDC_SOL_MINT',
                 'type': 'text',
                 'default': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
                 'required': False,
-                'description': 'Advanced: SPL USDC mint on Solana.'
+                'description': 'settings.desc.USDC_SOL_MINT',
             },
             {
                 'key': 'STRIPE_PAY_ENABLED',
-                'label': 'Enable Stripe Pay',
+                'label': 'settings.field.STRIPE_PAY_ENABLED',
                 'type': 'boolean',
                 'default': 'False',
-                'description': 'Enable card checkout through server-created Stripe Checkout Sessions.'
+                'description': 'settings.desc.STRIPE_PAY_ENABLED',
             },
             {
                 'key': 'STRIPE_SECRET_KEY',
-                'label': 'Stripe Secret Key',
+                'label': 'settings.field.STRIPE_SECRET_KEY',
                 'type': 'password',
                 'required': False,
-                'description': 'Get the sk_live_... or sk_test_... key from Stripe Dashboard > Developers > API keys. The current server-side Checkout flow does not need the pk_ public key.'
+                'description': 'settings.desc.STRIPE_SECRET_KEY',
             },
             {
                 'key': 'STRIPE_WEBHOOK_SECRET',
-                'label': 'Stripe Webhook Signing Secret',
+                'label': 'settings.field.STRIPE_WEBHOOK_SECRET',
                 'type': 'password',
                 'required': False,
-                'description': 'Create a Stripe Webhook endpoint for POST /api/billing/stripe/webhook, then reveal and paste its whsec_... signing secret. This value is not shown on the API keys page.'
+                'description': 'settings.desc.STRIPE_WEBHOOK_SECRET',
             },
             {
                 'key': 'STRIPE_PRODUCT_TAX_CODE',
-                'label': 'Stripe Product Tax Code',
+                'label': 'settings.field.STRIPE_PRODUCT_TAX_CODE',
                 'type': 'text',
                 'default': 'txcd_10103000',
                 'required': False,
-                'description': 'Stripe product tax category used for inline Checkout products. Defaults to SaaS for personal use (txcd_10103000).'
+                'description': 'settings.desc.STRIPE_PRODUCT_TAX_CODE',
             },
             {
                 'key': 'STRIPE_SUCCESS_URL',
-                'label': 'Stripe Success URL',
+                'label': 'settings.field.STRIPE_SUCCESS_URL',
                 'type': 'text',
                 'required': False,
-                'description': 'Optional Checkout success URL. Leave blank to use FRONTEND_URL/billing automatically.'
+                'description': 'settings.desc.STRIPE_SUCCESS_URL',
             },
             {
                 'key': 'STRIPE_CANCEL_URL',
-                'label': 'Stripe Cancel URL',
+                'label': 'settings.field.STRIPE_CANCEL_URL',
                 'type': 'text',
                 'required': False,
-                'description': 'Optional Checkout cancel URL. Leave blank to return to the billing page automatically.'
+                'description': 'settings.desc.STRIPE_CANCEL_URL',
             },
             {
                 'key': 'TRONGRID_API_KEY',
-                'label': 'TronGrid API Key',
+                'label': 'settings.field.TRONGRID_API_KEY',
                 'type': 'password',
                 'required': False,
-                'description': 'Optional. Higher TronGrid rate-limit / stability for TRC20 reconciliation. Get one at https://www.trongrid.io.'
+                'description': 'settings.desc.TRONGRID_API_KEY',
             },
             {
                 'key': 'TRONGRID_BASE_URL',
@@ -1909,10 +1909,10 @@ CONFIG_SCHEMA = {
             },
             {
                 'key': 'ETHERSCAN_API_KEY',
-                'label': 'Etherscan API Key',
+                'label': 'settings.field.ETHERSCAN_API_KEY',
                 'type': 'password',
                 'required': False,
-                'description': 'Optional. Used for ERC20 reconciliation via Etherscan V2 (free plan covers Ethereum mainnet). BEP20 uses BSC RPC unless you explicitly enable explorer mode. Get a key at https://etherscan.io/myapikey.'
+                'description': 'settings.desc.ETHERSCAN_API_KEY',
             },
             {
                 'key': 'ETHERSCAN_V2_BASE_URL',
@@ -1923,10 +1923,10 @@ CONFIG_SCHEMA = {
             },
             {
                 'key': 'BSC_RPC_URLS',
-                'label': 'BSC RPC URLs',
+                'label': 'settings.field.BSC_RPC_URLS',
                 'type': 'text',
                 'required': False,
-                'description': 'Optional comma-separated BSC JSON-RPC endpoints for BEP20 reconciliation. Use provider URLs with API keys here if public RPCs are unstable.'
+                'description': 'settings.desc.BSC_RPC_URLS',
             },
             {
                 'key': 'ETH_RPC_URLS',
@@ -1965,66 +1965,66 @@ CONFIG_SCHEMA = {
             },
             {
                 'key': 'USDT_PAY_CONFIRM_SECONDS',
-                'label': 'Confirm Delay (sec)',
+                'label': 'settings.field.USDT_PAY_CONFIRM_SECONDS',
                 'type': 'number',
                 'default': '30',
-                'description': 'Seconds to wait after detecting a transfer before marking the order confirmed and activating the membership.'
+                'description': 'settings.desc.USDT_PAY_CONFIRM_SECONDS',
             },
             {
                 'key': 'USDT_PAY_EXPIRE_MINUTES',
-                'label': 'Order Expire (min)',
+                'label': 'settings.field.USDT_PAY_EXPIRE_MINUTES',
                 'type': 'number',
                 'default': '30',
-                'description': 'Minutes a pending USDT order stays open before expiring. Users can re-open the modal to generate a fresh amount suffix.'
+                'description': 'settings.desc.USDT_PAY_EXPIRE_MINUTES',
             },
             {
                 'key': 'USDT_WORKER_POLL_INTERVAL',
-                'label': 'Worker Poll Interval (sec)',
+                'label': 'settings.field.USDT_WORKER_POLL_INTERVAL',
                 'type': 'number',
                 'default': '30',
-                'description': 'How often the background worker re-scans pending/paid orders against on-chain data.'
+                'description': 'settings.desc.USDT_WORKER_POLL_INTERVAL',
             },
             {
                 'key': 'BILLING_COST_BACKTEST',
-                'label': 'Backtest Cost',
+                'label': 'settings.field.BILLING_COST_BACKTEST',
                 'type': 'number',
                 'default': '30',
-                'description': 'Credits charged for each strategy backtest run'
+                'description': 'settings.desc.BILLING_COST_BACKTEST',
             },
             {
                 'key': 'BILLING_COST_AI_REVIEW',
-                'label': 'AI Strategy Review Cost',
+                'label': 'settings.field.BILLING_COST_AI_REVIEW',
                 'type': 'number',
                 'default': '10',
-                'description': 'Credits charged for each successful AI-assisted strategy review'
+                'description': 'settings.desc.BILLING_COST_AI_REVIEW',
             },
             {
                 'key': 'BILLING_COST_AI_ANALYSIS',
-                'label': 'AI Analysis Cost (per symbol)',
+                'label': 'settings.field.BILLING_COST_AI_ANALYSIS',
                 'type': 'number',
                 'default': '10',
-                'description': 'Credits per symbol (instant analysis and scheduled tasks use this price)'
+                'description': 'settings.desc.BILLING_COST_AI_ANALYSIS',
             },
             {
                 'key': 'BILLING_COST_AI_CODE_GEN',
-                'label': 'AI Code Generation Cost',
+                'label': 'settings.field.BILLING_COST_AI_CODE_GEN',
                 'type': 'number',
                 'default': '30',
-                'description': 'Credits per AI strategy/indicator code generation (higher token usage)'
+                'description': 'settings.desc.BILLING_COST_AI_CODE_GEN',
             },
             {
                 'key': 'BILLING_COST_AI_COPILOT_CHAT',
-                'label': 'AI Copilot Chat Cost',
+                'label': 'settings.field.BILLING_COST_AI_COPILOT_CHAT',
                 'type': 'number',
                 'default': '5',
-                'description': 'Credits per AI Copilot conversation turn'
+                'description': 'settings.desc.BILLING_COST_AI_COPILOT_CHAT',
             },
             {
                 'key': 'BILLING_COST_AI_COPILOT_IMAGE',
-                'label': 'AI Copilot Image Analysis Cost',
+                'label': 'settings.field.BILLING_COST_AI_COPILOT_IMAGE',
                 'type': 'number',
                 'default': '15',
-                'description': 'Extra credits charged when a Copilot message includes chart images'
+                'description': 'settings.desc.BILLING_COST_AI_COPILOT_IMAGE',
             },
             {
                 'key': 'BILLING_COST_AI_DECISION_FILTER',
@@ -2042,24 +2042,24 @@ CONFIG_SCHEMA = {
             },
             {
                 'key': 'MARKETPLACE_PLATFORM_FEE_RATE',
-                'label': 'Marketplace Platform Fee Rate',
+                'label': 'settings.field.MARKETPLACE_PLATFORM_FEE_RATE',
                 'type': 'text',
                 'default': '0',
-                'description': 'Platform commission deducted from paid market purchases before crediting the seller. Accepts ratio values like 0.1 or percent strings like 10%.'
+                'description': 'settings.desc.MARKETPLACE_PLATFORM_FEE_RATE',
             },
             {
                 'key': 'CREDITS_REGISTER_BONUS',
-                'label': 'Register Bonus',
+                'label': 'settings.field.CREDITS_REGISTER_BONUS',
                 'type': 'number',
                 'default': '100',
-                'description': 'Credits awarded to new users on registration'
+                'description': 'settings.desc.CREDITS_REGISTER_BONUS',
             },
             {
                 'key': 'CREDITS_REFERRAL_BONUS',
-                'label': 'Referral Bonus',
+                'label': 'settings.field.CREDITS_REFERRAL_BONUS',
                 'type': 'number',
                 'default': '50',
-                'description': 'Credits awarded to referrer for each signup'
+                'description': 'settings.desc.CREDITS_REFERRAL_BONUS',
             },
             {
                 'key': 'FREE_USER_STRATEGY_LIMIT',
