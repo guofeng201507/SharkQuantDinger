@@ -1,12 +1,11 @@
 info:
-  description: 'Human-facing REST API for QuantDinger. Agent integrations use `/api/agent/v1`
+  description: 'Human-facing REST API for SharkQuant. Agent integrations use `/api/agent/v1`
     — see `docs/agent/agent-openapi.json`. Conventions: `docs/architecture/API_CONVENTIONS.md`.'
   contact:
-    name: QuantDinger
-    url: https://github.com/OpenByteInc/quantdinger
+    name: SharkQuant
   license:
     name: See repository LICENSE
-  title: QuantDinger Web API
+  title: SharkQuant Web API
   version: 1.0.0
 components:
   securitySchemes:
@@ -5761,7 +5760,7 @@ paths:
         by editing ``.env`` (or the Settings page) — no frontend rebuild required.
 
 
-        Empty ENV values fall back to the bundled QuantDinger defaults so a fresh
+        Empty ENV values fall back to the bundled defaults so a fresh
 
         install still ships with working links instead of blanks.'
       tags:
@@ -8403,4 +8402,87 @@ paths:
       - QuickTrade
       operationId: postApiQuickTradeEventRadarAnalyze
       x-visibility: private
+  /api/docs:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Which documents and editions are stored.
+      tags:
+      - Settings
+      operationId: getApiDocs
+      x-visibility: internal
+  /api/docs/{slug}:
+    get:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Return the document for the caller's UI language (same language, then
+      tags:
+      - Settings
+      operationId: getApiDocsSlug
+      description: 'Return the document for the caller''s UI language (same language,
+        then
+
+        English, then any edition as fallback).'
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      x-visibility: internal
+    parameters:
+    - in: path
+      name: slug
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    put:
+      responses:
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanErrorEnvelope'
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HumanSuccessEnvelope'
+      summary: Create or replace one edition
+      tags:
+      - Settings
+      operationId: putApiDocsSlug
+      description: 'Create or replace one edition. Body: {content_md, locale?, title?}.'
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+      x-visibility: internal
 openapi: 3.0.3
