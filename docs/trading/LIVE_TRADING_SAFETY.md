@@ -39,7 +39,7 @@ HTX equity products are rejected until authoritative metadata and an execution c
 
 An exchange-native stop loss, take profit, liquidation, ADL event, or manual close can flatten the venue position before the normal pending-order path records the close. Position sync treats this as an account shortfall and blocks new entries or additions on that leg while keeping reconciliation and reduce-only risk controls available.
 
-QuantDinger clears the stale strategy leg only when all of these conditions hold:
+SharkQuant clears the stale strategy leg only when all of these conditions hold:
 
 - the exchange position snapshot is fresh rather than cached;
 - the latest open or add fill is older than the configured grace window;
@@ -48,6 +48,16 @@ QuantDinger clears the stale strategy leg only when all of these conditions hold
 - each fill is recorded idempotently before the local leg is removed.
 
 If any condition is ambiguous, the ledger remains intact and the ownership block stays active for operator review. A ghost position alone does not stop the strategy process because stopping it can also stop monitoring and recovery. Stop or emergency-stop the strategy when exchange risk is still present, exposure is growing, credentials are unusable, or account truth cannot be recovered.
+
+### Operator switches
+
+These are the only supported knobs for the reconciliation path; leave them at their defaults unless you are deliberately changing incident behavior.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `POSITION_SYNC_PURGE_FLAT_LEDGER` | `true` | Clear a stale strategy leg after the close-side fills are attributed and recorded. Set `false` as an emergency rollback to keep all local legs intact (reconciliation and entry blocks keep running). |
+| `POSITION_SYNC_PURGE_GRACE_SEC` | `120` | An open/add fill younger than this keeps its leg even if the venue already looks flat. Raise it for slow venues or large clock skew. |
+| `OKX_CANCEL_ALL_ALGO_ORDERS` | `false` | Allow OKX paths to cancel **all** algo orders (pre-clean before leverage setup and the account-wide 59669 retry). These sweeps also cancel manually placed TP/SL orders. |
 
 ## Optional JEV System One entry filter
 

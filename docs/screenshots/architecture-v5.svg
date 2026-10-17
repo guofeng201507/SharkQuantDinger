@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1120" viewBox="0 0 1600 1120" role="img" aria-labelledby="title description">
-  <title id="title">QuantDinger v5.5.1 system architecture</title>
+  <title id="title">SharkQuant v5.5 system architecture</title>
   <desc id="description">Current single-host Docker Compose architecture and horizontal scaling boundaries, from client and agent access through venue-native data, durable event workers, execution, state, observability, and the closed-loop trading workflow.</desc>
 
   <defs>
@@ -135,7 +135,7 @@
   </g>
   <circle cx="746" cy="292" r="15" fill="#155eef"/>
   <text x="746" y="298" text-anchor="middle" class="label white">4</text>
-  <text x="771" y="299" class="section-title blue">QuantDinger Core Platform</text>
+  <text x="771" y="299" class="section-title blue">SharkQuant Core Platform</text>
 
   <g>
     <rect x="738" y="322" width="414" height="58" rx="11" fill="#ffffff" stroke="#9bbcf4"/>

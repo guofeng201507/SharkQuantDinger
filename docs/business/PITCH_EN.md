@@ -1,6 +1,6 @@
 # SharkQuant — Business Pitch
 
-> Version: 2026-10-11 | Language: English | Companion deck: `SharkQuant_Pitch_EN.pptx`
+> Version: 2026-10-17 | Language: English | Companion deck: `SharkQuant_Pitch_EN.pptx`
 > `[TBD: ...]` marks information only the founder can provide; the full list is in `FILL_IN.md`.
 
 ---
@@ -9,7 +9,7 @@
 
 **SharkQuant is an AI-native, all-in-one quantitative trading platform: market data → AI research → strategy authoring & backtesting → automated bot execution → live risk controls — in a single product. One retail trader can now run the workflow that used to require a small team.**
 
-- **Product (live)**: running in production at sharkv2.com — 39 feature pages, 7 asset classes (crypto, US equities, HK equities, FX, futures, A-shares, tokenized equities), 8 trading venues (Binance, OKX, Bitget, Bybit, Gate, HTX, IBKR, Alpaca), 222 built-in factors, 58 MCP (Model Context Protocol) tools for AI agents, AI output in 11 languages, bilingual (EN/中文) UI.
+- **Product (live)**: running in production at sharkv2.com — 39 feature pages, 7 asset classes (crypto, US equities, HK equities, FX, futures, A-shares, tokenized equities), 8 trading venues (Binance, OKX, Bitget, Bybit, Gate, HTX, IBKR, Alpaca), 264 built-in factors (incl. 201 TA-Lib 0.8.1), 58 MCP (Model Context Protocol) tools for AI agents, AI output in 11 languages, bilingual (EN/中文) UI.
 - **Model**: subscriptions ($19.9/mo · $199/yr · $499 lifetime) + usage credits (AI & backtests) + indicator-marketplace take rate + referral commissions. Payments (Stripe + stablecoins) are built in and await a merchant channel to be switched on.
 - **Why now**: algorithmic trading grows at a 13.6% CAGR ($26.3B in 2026 → $64.3B by 2033); the AI-agent ecosystem exploded in 2026 (MCP servers grew from ~50 at launch to ~8,000–12,000 by Q2 2026), yet "letting an AI agent trade safely" has no standard answer — SharkQuant's Agent Gateway already answers it with paper-only defaults, scoped tokens, rate limits, and full audit trails.
 - **Traction**: Aug–Oct 2026 — v5 distributed-architecture upgrade, full front-end replacement, bilingual rollout, security audit, stable production operation.
@@ -39,7 +39,7 @@ Six modules form a closed loop:
 
 1. **Markets** — real-time multi-market quotes (5-second WebSocket refresh), candlesticks with MA/BOLL/MACD/RSI, sentiment strip (Fear & Greed / VIX / DXY), Global Market (indices, FX, crypto, commodities + heatmap + economic calendar), **Opportunity Radar** (rule-based whole-market scans).
 2. **AI Research** — streaming AI chat with attachments, **Fast Analysis** (multi-source diagnosis of any instrument), AI reports (PDF export, shareable links), **Event Radar** (AI assesses news impact on your positions and watchlist).
-3. **Strategy** — script library with online IDE, compile validation, versioning and community publishing; **AI strategy generation** (natural language → backtestable code); 222-factor library + factor research; universes; parameter optimization; per-strategy AI copilot.
+3. **Strategy** — script library with online IDE, compile validation, versioning and community publishing; **AI strategy generation** (natural language → backtestable code); 264-factor library (incl. TA-Lib 0.8.1) + factor research with tunable parameters; universes; parameter optimization; per-strategy AI copilot.
 4. **Backtest** — a real 6-month BTC dual-MA run produced **+34.99% return over 1,104 equity points**; full trade log, win rate, Sharpe, max drawdown, benchmark-relative metrics. (Screenshots in `assets/en/` use real backtest data.)
 5. **Execution** — trading bots (templates + natural-language "AI Smart" creation), trading terminal (orders/close/cancel with confirmations), position & order mirrors, pending-order queue, **24/7 distributed strategy runtime** (leases, heartbeats, idempotency).
 6. **Connectivity** — 8 venues (6 crypto exchanges + IBKR/Alpaca for US/HK equities and more); **Agent Gateway** — the whole platform exposed as 58 MCP tools callable by Cursor / Claude Code / Codex and other AI agents.
