@@ -140,7 +140,7 @@ same semantic version with a leading `v`, for example `v5.0.1`.
 ## Architecture
 
 <p align="center">
-  <img src="docs/screenshots/architecture-v5.png" alt="QuantDinger v5 architecture covering clients, Agent Gateway, core platform, distributed runtime workers, Kafka, infrastructure, observability, and the closed-loop trading workflow" width="100%">
+  <img src="docs/screenshots/architecture-v5.png" alt="SharkQuant v5 architecture covering clients, Agent Gateway, core platform, distributed runtime workers, Kafka, infrastructure, observability, and the closed-loop trading workflow" width="100%">
 </p>
 
 <p align="center"><sub>The editable source is <a href="docs/screenshots/architecture-v5.svg">architecture-v5.svg</a>; the Mermaid topology below is the detailed runtime source of truth.</sub></p>

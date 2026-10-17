@@ -43,7 +43,7 @@
   <rect x="28" y="28" width="1544" height="1064" rx="24" fill="none" stroke="#c9d8ee" stroke-width="2"/>
 
   <g transform="translate(800 62)" text-anchor="middle">
-    <text class="title" x="0" y="0">Quant<tspan class="brand">Dinger</tspan> v5.5.1 Architecture</text>
+    <text class="title" x="0" y="0">Shark<tspan class="brand">Quant</tspan> v5.5 Architecture</text>
     <text class="subtitle" x="0" y="31">Single-host Compose today · durable event boundaries for horizontal expansion</text>
   </g>
 
