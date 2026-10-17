@@ -97,7 +97,7 @@
     <rect x="90" y="490" width="260" height="72" rx="11" fill="#ffffff" stroke="#9bd3b3"/>
     <text x="110" y="516" class="card-title">Fundamentals and News</text>
     <text x="110" y="537" class="card-sub">Macro, earnings, economic calendar</text>
-    <text x="110" y="553" class="card-sub">News, sentiment, provider APIs</text>
+    <text x="110" y="553" class="card-sub">News, sentiment, SearXNG, providers</text>
 
     <rect x="90" y="574" width="260" height="82" rx="11" fill="#ffffff" stroke="#9bd3b3"/>
     <text x="110" y="600" class="card-title">User Input</text>
@@ -114,8 +114,8 @@
 
   <g>
     <rect x="414" y="322" width="260" height="58" rx="11" fill="#ffffff" stroke="#c2b5ef"/>
-    <text x="434" y="347" class="card-title">Nginx Frontends</text>
-    <text x="434" y="366" class="card-sub">Web and mobile delivery, API proxy</text>
+    <text x="434" y="347" class="card-title">Nginx + BFF</text>
+    <text x="434" y="366" class="card-sub">Host nginx, self-built SPA + BFF</text>
     <rect x="414" y="390" width="260" height="58" rx="11" fill="#ffffff" stroke="#c2b5ef"/>
     <text x="434" y="415" class="card-title">Flask and Gunicorn API</text>
     <text x="434" y="434" class="card-sub">Validation, auth, contracts, commands</text>
@@ -218,7 +218,7 @@
   <text x="1212" y="740" text-anchor="middle" class="label white">7</text>
   <text x="1237" y="741" class="section-title red">Observability</text>
   <text x="1206" y="772" class="label">JSON logs · Request IDs · Metrics</text>
-  <text x="1206" y="795" class="card-sub">Prometheus · Grafana · Alertmanager</text>
+  <text x="1206" y="795" class="card-sub">Metrics endpoint · optional dashboards</text>
 
   <g filter="url(#shadow)">
     <rect x="70" y="844" width="1460" height="98" rx="18" fill="#f8fbff" stroke="#8db6f6" stroke-width="2"/>
@@ -238,7 +238,7 @@
     <rect x="802" y="897" width="167" height="28" rx="7" fill="#ffffff" stroke="#a8c4ef"/>
     <text x="885" y="916" text-anchor="middle" class="small">Secret encryption</text>
     <rect x="979" y="897" width="167" height="28" rx="7" fill="#ffffff" stroke="#a8c4ef"/>
-    <text x="1062" y="916" text-anchor="middle" class="small">Single-host Compose · GHCR</text>
+    <text x="1062" y="916" text-anchor="middle" class="small">Compose · local + GHCR</text>
     <rect x="1156" y="897" width="167" height="28" rx="7" fill="#ffffff" stroke="#a8c4ef"/>
     <text x="1239" y="916" text-anchor="middle" class="small">Python 3.12 · Self-hosted</text>
     <rect x="1333" y="897" width="167" height="28" rx="7" fill="#ffffff" stroke="#a8c4ef"/>

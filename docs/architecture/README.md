@@ -36,6 +36,7 @@ reliability requirements.
 
 | Task | Document |
 | --- | --- |
+| See the topology actually running in production | [Current production architecture](../architecture-docs.md) |
 | Understand package and process ownership | [Backend architecture](ARCHITECTURE.md) |
 | Preserve dependency direction | [Module boundaries](MODULE_BOUNDARIES.md) |
 | Change concurrent or durable work | [Concurrency model](CONCURRENCY_MODEL.md) |

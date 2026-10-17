@@ -108,6 +108,7 @@ ownership or shared state.
 
 ### Architecture and scale planning
 
+- [Current production architecture](architecture-docs.md)
 - [Architecture overview](architecture/README.md)
 - [Concurrency model](architecture/CONCURRENCY_MODEL.md)
 - [Process and task ownership](architecture/PROCESS_ROLES_AND_TASKS.md)
