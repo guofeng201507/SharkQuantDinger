@@ -9,6 +9,7 @@ import pytest
 
 from app.services import pending_order_worker as worker_module
 from app.services.live_trading.adapters import LiveOrderPhaseAdapter
+from app.services.pending_orders import live_sync_recovery
 from app.services.pending_orders.sent_order_recovery import (
     is_final_fill,
     normalize_live_order_status,
@@ -93,7 +94,8 @@ def test_claim_live_sent_order_transitions_the_claimed_row(monkeypatch):
             assert "status = 'syncing'" in sql
             assert "COALESCE(filled, 0) <= 0" in sql
             assert "live_fee_sync:retry" in sql
-            assert params == (41, 300)
+            assert "live_fill_sync:retry_error" in sql
+            assert params == (41, 90, 300)
 
         def fetchone(self):
             return {"id": 41, "status": "syncing"}
@@ -117,8 +119,47 @@ def test_claim_live_sent_order_transitions_the_claimed_row(monkeypatch):
     monkeypatch.setattr(worker_module, "get_db_connection", lambda: Database())
     worker = object.__new__(worker_module.PendingOrderWorker)
     worker._fee_sync_retry_sec = 300
+    worker._stale_processing_sec = 90
 
     assert worker._claim_live_sent_order(41) == {"id": 41, "status": "syncing"}
+
+
+def test_fetch_live_sent_orders_defers_recent_retry_errors(monkeypatch):
+    executed = []
+
+    class Cursor:
+        def execute(self, sql, params):
+            executed.append((sql, params))
+
+        def fetchall(self):
+            return []
+
+        def close(self):
+            return None
+
+    class Database:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr(worker_module, "get_db_connection", lambda: Database())
+    worker = object.__new__(worker_module.PendingOrderWorker)
+    worker._stale_processing_sec = 90
+    worker._fee_sync_retry_sec = 300
+
+    assert worker._fetch_live_sent_orders(limit=50) == []
+
+    select_sql, params = executed[1]
+    assert "live_fill_sync:retry_error" in select_sql
+    assert params == (90, 300, 50)
 
 
 def test_fee_reconciliation_is_not_throttled_by_a_healthy_execution_stream():
@@ -147,6 +188,96 @@ def test_fee_reconciliation_limits_each_exchange_account_batch(monkeypatch):
     worker._sync_live_sent_orders()
 
     assert synced == [1, 2]
+
+
+def test_live_sent_sync_restores_claim_after_reconciliation_error(monkeypatch):
+    worker = object.__new__(worker_module.PendingOrderWorker)
+    worker._fee_sync_batch_per_account = 5
+    row = {"id": 41, "exchange_id": "gate", "credential_id": 7, "market_type": "swap"}
+    monkeypatch.setattr(worker, "_fetch_live_sent_orders", lambda limit: [row])
+    monkeypatch.setattr(worker, "_should_rest_reconcile", lambda _row: True)
+    monkeypatch.setattr(
+        worker,
+        "_sync_one_live_sent_order",
+        lambda _row: (_ for _ in ()).throw(RuntimeError("snapshot mismatch")),
+    )
+    restored = []
+    monkeypatch.setattr(
+        worker_module,
+        "restore_live_sent_order_after_sync_error",
+        lambda restored_row, exc: restored.append((restored_row["id"], str(exc))),
+    )
+
+    worker._sync_live_sent_orders()
+
+    assert restored == [(41, "snapshot mismatch")]
+
+
+def test_restore_live_sent_order_after_sync_error_releases_syncing_claim(monkeypatch):
+    executed = []
+
+    class Cursor:
+        def execute(self, sql, params):
+            executed.append((sql, params))
+
+        def close(self):
+            return None
+
+    class Database:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            executed.append(("commit", None))
+
+    monkeypatch.setattr(live_sync_recovery, "get_db_connection", lambda: Database())
+
+    live_sync_recovery.restore_live_sent_order_after_sync_error(
+        {"id": 41},
+        RuntimeError("snapshot mismatch"),
+    )
+
+    sql, params = executed[0]
+    assert "SET status = 'sent'" in sql
+    assert "status = 'syncing'" in sql
+    assert "live_fill_sync:retry_error" in sql
+    assert params == ("snapshot mismatch", 41)
+    assert executed[1] == ("commit", None)
+
+
+@pytest.mark.parametrize("exchange_id", ["gate", "okx", "bitget", "bybit", "binance", "htx"])
+def test_live_sent_sync_ignores_float_tail_across_crypto_exchanges(monkeypatch, exchange_id):
+    row = _row(filled=0.0048, avg_price=84_590.1)
+    row.update(
+        {
+            "exchange_id": exchange_id,
+            "amount": 0.005174558160819331,
+            "signal_type": "add_long",
+            "payload_json": (
+                '{"strategy_id":9,"strategy_run_id":3,"order_intent_id":5,'
+                '"signal_type":"add_long","amount":0.005174558160819331}'
+            ),
+        }
+    )
+    worker, snapshots, persisted = _worker(
+        monkeypatch,
+        row,
+        exchange_fill=(0.004800000000000001, 84_590.09999999999, "cancelled"),
+    )
+
+    worker._sync_one_live_sent_order(row)
+
+    assert persisted[0]["filled"] == 0
+    assert persisted[0]["cumulative_filled"] == pytest.approx(0.0048)
+    assert persisted[0]["cumulative_average_price"] == pytest.approx(84_590.1)
+    assert snapshots[0]["status"] == "cancelled"
+    assert snapshots[0]["filled"] == pytest.approx(0.0048)
 
 
 def test_live_sent_sync_finalizes_after_restart_without_duplicate_fill(monkeypatch):

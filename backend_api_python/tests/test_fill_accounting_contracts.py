@@ -66,6 +66,15 @@ def test_cumulative_value_delta_handles_fractional_shares_and_partial_fills():
     assert cumulative_delta(2, 105, 1, 100) == (0, 0)
 
 
+def test_cumulative_value_delta_ignores_exchange_float_tail_and_average_revision():
+    assert cumulative_delta(
+        0.0048,
+        84_590.1,
+        0.004800000000000001,
+        84_590.09999999999,
+    ) == (0, 0)
+
+
 def test_htx_real_top_level_trade_array_uses_global_ids_and_contract_symbol():
     payload = {
         "topic": "matchOrders_cross.ETH-USDT",

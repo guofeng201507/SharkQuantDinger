@@ -125,6 +125,7 @@ def get_indicator_detail(indicator_id: int):
             indicator_id,
             user_id=g.user_id,
             accept_language=accept_lang,
+            is_admin=_is_admin(),
         )
         
         if not result:

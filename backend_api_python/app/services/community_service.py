@@ -788,6 +788,7 @@ class CommunityService:
         indicator_id: int,
         user_id: int = None,
         accept_language: str = 'en-US',
+        is_admin: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """获取指标详情。
 
@@ -825,7 +826,7 @@ class CommunityService:
                 
                 is_owner = row['user_id'] == user_id
                 is_approved = row.get('review_status') in (None, '', 'approved')
-                if not is_owner and (not row['publish_to_community'] or not is_approved):
+                if not is_owner and not is_admin and (not row['publish_to_community'] or not is_approved):
                     cur.close()
                     return None
                 

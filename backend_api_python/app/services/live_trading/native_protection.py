@@ -121,13 +121,18 @@ def _place_binance(client: Any, request: NativeProtectionRequest) -> List[Dict[s
     if not dual:
         base["reduceOnly"] = "true"
     responses: List[Dict[str, Any]] = []
-    for kind, price in (
-        ("STOP_MARKET", request.stop_loss_price),
-        ("TAKE_PROFIT_MARKET", request.take_profit_price),
+    for kind, price, suffix in (
+        ("STOP_MARKET", request.stop_loss_price, "sl"),
+        ("TAKE_PROFIT_MARKET", request.take_profit_price, "tp"),
     ):
         if price <= 0:
             continue
         body = dict(base, type=kind, triggerPrice=str(price))
+        client_algo_id = client._format_client_order_id(
+            f"{request.client_order_id}-{suffix}" if request.client_order_id else ""
+        )
+        if client_algo_id:
+            body["clientAlgoId"] = client_algo_id
         responses.append(client._signed_request("POST", "/fapi/v1/algoOrder", params=body))
     if request.trailing_stop_pct > 0:
         callback = min(10.0, max(0.1, request.trailing_stop_pct * 100.0))
@@ -135,6 +140,11 @@ def _place_binance(client: Any, request: NativeProtectionRequest) -> List[Dict[s
         activation = _activation_price(request)
         if activation > 0:
             body["activatePrice"] = str(activation)
+        client_algo_id = client._format_client_order_id(
+            f"{request.client_order_id}-trail" if request.client_order_id else ""
+        )
+        if client_algo_id:
+            body["clientAlgoId"] = client_algo_id
         responses.append(client._signed_request("POST", "/fapi/v1/algoOrder", params=body))
     return responses
 

@@ -100,6 +100,7 @@ from app.services.pending_orders.sent_order_recovery import (
     is_final_fill, normalize_live_order_status,
     tracked_fill_baseline,
 )
+from app.services.pending_orders.live_sync_recovery import restore_live_sent_order_after_sync_error
 from app.services.pending_orders.order_quantities import (
     exchange_quantity_snapshot,
     reconciled_queue_status,
@@ -725,11 +726,13 @@ class PendingOrderWorker(
             try:
                 self._sync_one_live_sent_order(row)
             except Exception as exc:
+                restore_live_sent_order_after_sync_error(row, exc)
                 logger.warning(
                     "Live fill sync failed: pending_id=%s exchange=%s err=%s",
                     row.get("id"),
                     row.get("exchange_id"),
                     exc,
+                    exc_info=True,
                 )
 
     def _should_rest_reconcile(self, row: Dict[str, Any]) -> bool:
@@ -810,7 +813,8 @@ class PendingOrderWorker(
                            ) AS fee_reconciliation_needed
                     FROM pending_orders
                     WHERE (
-                            status = 'sent'
+                            (status = 'sent' AND (COALESCE(dispatch_note, '') <> 'live_fill_sync:retry_error'
+                             OR updated_at < NOW() - (%s * INTERVAL '1 second')))
                             OR (
                                 status IN ('filled', 'cancelled') AND COALESCE(filled, 0) >
                                 (SELECT COALESCE(SUM(t.amount), 0) FROM qd_strategy_trades t WHERE t.pending_order_id = pending_orders.id)
@@ -842,7 +846,7 @@ class PendingOrderWorker(
                              sent_at ASC NULLS FIRST, id ASC
                     LIMIT %s
                     """,
-                    (int(self._fee_sync_retry_sec), int(limit)),
+                    (stale_sec, int(self._fee_sync_retry_sec), int(limit)),
                 )
                 rows = cur.fetchall() or []
                 cur.close()
@@ -864,7 +868,8 @@ class PendingOrderWorker(
                     updated_at = NOW()
                 WHERE id = %s
                   AND (
-                        status = 'sent'
+                        (status = 'sent' AND (COALESCE(dispatch_note, '') <> 'live_fill_sync:retry_error'
+                         OR updated_at < NOW() - (%s * INTERVAL '1 second')))
                         OR (
                             status IN ('filled', 'cancelled') AND COALESCE(filled, 0) >
                             (SELECT COALESCE(SUM(t.amount), 0) FROM qd_strategy_trades t WHERE t.pending_order_id = pending_orders.id)
@@ -893,7 +898,7 @@ class PendingOrderWorker(
                       )
                 RETURNING *
                 """,
-                (int(order_id), int(self._fee_sync_retry_sec)),
+                (int(order_id), int(self._stale_processing_sec), int(self._fee_sync_retry_sec)),
             )
             row = cur.fetchone()
             db.commit()
@@ -1045,6 +1050,10 @@ class PendingOrderWorker(
             if '_other_fees' in combined:
                 aggregate_filled = combined['cumulative_quantity']
                 aggregate_avg = combined['cumulative_average_price']
+            if delta <= ALPACA_FILL_DELTA_EPSILON:
+                delta = 0.0
+                aggregate_filled = previous_filled
+                aggregate_avg = previous_avg
             signal_type = str(payload.get("signal_type") or row.get("signal_type") or "")
             commission_quote = fee_breakdown_to_quote(
                 client,
@@ -1270,6 +1279,7 @@ class PendingOrderWorker(
                 UPDATE pending_orders
                 SET status = %s,
                     dispatch_note = %s,
+                    last_error = '',
                     filled = %s,
                     avg_price = %s,
                     fee_status = CASE
@@ -1341,6 +1351,12 @@ class PendingOrderWorker(
                         UPDATE pending_orders
                         SET status = 'pending',
                             updated_at = NOW(),
+                            attempts = CASE
+                                WHEN attempts >= max_attempts
+                                     AND COALESCE(payload_json, '') LIKE '%%leverage_retry%%'
+                                THEN GREATEST(0, max_attempts - 1)
+                                ELSE attempts
+                            END,
                             dispatch_note = CASE
                                 WHEN dispatch_note IS NULL OR dispatch_note = '' THEN 'requeued_stale_processing'
                                 ELSE dispatch_note
@@ -1348,7 +1364,10 @@ class PendingOrderWorker(
                         WHERE status = 'processing'
                           AND COALESCE(client_order_id, '') = ''
                           AND (updated_at IS NULL OR updated_at < NOW() - INTERVAL '%s seconds')
-                          AND (attempts < max_attempts)
+                          AND (
+                              attempts < max_attempts
+                              OR COALESCE(payload_json, '') LIKE '%%leverage_retry%%'
+                          )
                         """,
                         (stale_sec,),
                     )
@@ -1374,7 +1393,21 @@ class PendingOrderWorker(
                 )
                 rows = cur.fetchall() or []
                 cur.close()
-            return rows
+            now_ts = time.time()
+            eligible: List[Dict[str, Any]] = []
+            for row in rows:
+                payload_json = row.get("payload_json") or ""
+                payload_obj: Dict[str, Any] = {}
+                if payload_json and isinstance(payload_json, str):
+                    try:
+                        payload_obj = json.loads(payload_json) or {}
+                    except Exception:
+                        payload_obj = {}
+                not_before = float(payload_obj.get("leverage_retry_not_before") or 0)
+                if not_before > now_ts:
+                    continue
+                eligible.append(row)
+            return eligible
         except Exception as e:
             logger.warning(f"fetch_pending_orders failed: {e}")
             return []
@@ -1951,13 +1984,16 @@ class PendingOrderWorker(
                     margin_mode=margin_mode,
                 )
             except Exception as e:
-                err = f"derivatives_account_configuration_failed:{e}"
-                logger.warning(f"live leverage set failed: pending_id={order_id}, strategy_id={strategy_id}, cfg={safe_cfg}, err={e}")
-                self._mark_failed(order_id=order_id, error=err)
-                _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} {err}")
-                _notify_live_best_effort(status="failed", error=err, amount_hint=amount, price_hint=ref_price)
-                append_strategy_log(strategy_id, "error", f"Leverage or margin-mode setup failed for {symbol}: {e}")
-                return
+                from app.services.pending_orders.leverage_retry import (
+                    handle_derivatives_configuration_error as _hl,
+                )
+                if _hl(
+                    error=e, order_id=order_id, strategy_id=strategy_id, symbol=str(symbol),
+                    payload=payload, phases=phases, safe_cfg=safe_cfg, mark_failed=self._mark_failed,
+                    append_log=append_strategy_log, console_print=_console_print,
+                    notify=lambda **kw: _notify_live_best_effort(amount_hint=amount, price_hint=ref_price, **kw),
+                ):
+                    return
 
         fills = FillAccumulator()
 
